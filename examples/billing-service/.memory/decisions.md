@@ -24,8 +24,9 @@ status: accepted
 anchors: src/billing/**
 author: Rudra Patel
 created: 2026-09-27
-verified_at: 3b122b2
-anchor_hash: 41d28a4164e030b6
+verified_at: 1fc89b9
+anchor_hash: e0659bc9227564c5
+anchor_norm: 4ca6e11d5e3d2971
 -->
 
 All provider traffic goes through the Gateway class in src/billing/gateway.py. The idempotency key is generated in charge(); retries and audit logging live inside the gateway.
