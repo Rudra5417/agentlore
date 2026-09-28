@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
