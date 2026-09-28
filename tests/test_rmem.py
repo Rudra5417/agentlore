@@ -66,8 +66,9 @@ class Fixture:
         self.git("add", "-A")
         self.git("commit", "-q", "-m", message)
 
-    def rmem(self, *args):
-        r = subprocess.run([sys.executable, str(TOOL), *args], cwd=self.dir,
+    def rmem(self, *args, cwd=None):
+        r = subprocess.run([sys.executable, str(TOOL), *args],
+                           cwd=(self.dir / cwd) if cwd else self.dir,
                            capture_output=True, text=True)
         return r.returncode, r.stdout + r.stderr
 
@@ -825,6 +826,58 @@ class TestSinceBoundary(Base):
         self.f.rmem("index")
         code, out = self.f.rmem("check", "--brief", "--since", base)
         self.assertEqual(code, 0, out)
+
+
+class TestSubdirectoryLayout(Base):
+    """A memory root that is NOT the git root must still be checked.
+
+    git reports changed paths relative to the REPO ROOT, while .memory/ and anchors are
+    written relative to the WORKING DIRECTORY. Comparing the two never matches, so every
+    change-scoped check -- dead-ends-settled above all -- goes silent in exactly the layout a
+    monorepo or a service subdirectory uses. Silent is the worst outcome: the gate reports
+    GREEN while checking nothing.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.f.write("svc/src/billing/charge.py", "def charge():\n    return 1\n")
+        self.f.commit("add the service")
+        code, out = self.f.rmem("init", cwd="svc")
+        self.assertEqual(code, 0, out)
+        self.f.commit("init memory inside the service")
+
+    def test_dead_ends_settled_fires_from_a_subdirectory(self):
+        base = self.f.git("rev-parse", "HEAD").stdout.strip()
+        self.f.write("svc/src/billing/charge.py", "def charge():\n    return 2\n")
+        code, out = self.f.rmem("add", "--type", "dead-end",
+                                "--title", "The window rejects credit notes too",
+                                "--body", "b", "--anchor", "src/billing/**",
+                                "--evidence", "observed in prod", "--author", "test",
+                                cwd="svc")
+        self.assertEqual(code, 0, out)
+        self.f.commit("fix it and record it in the same change")
+        self.f.rmem("index", cwd="svc")
+
+        code, out = self.f.rmem("check", "--brief", "--since", base, cwd="svc")
+        self.assertEqual(code, 1,
+                         "dead-ends-settled went quiet: git paths are repo-root relative "
+                         "while anchors are cwd relative.\n" + out)
+        self.assertIn("dead-ends-settled", out)
+
+    def test_the_stale_report_names_the_file_from_a_subdirectory(self):
+        self.f.rmem("add", "--type", "decision", "--title", "Gateway only",
+                    "--anchor", "src/billing/**", "--author", "test", cwd="svc")
+        self.f.rmem("index", cwd="svc")
+        self.f.commit("record the decision")
+        self.f.write("svc/src/billing/charge.py", "def charge():\n    return 3\n")
+        self.f.commit("move the code")
+        self.f.rmem("index", cwd="svc")
+
+        code, out = self.f.rmem("check", cwd="svc")
+        self.assertEqual(code, 1, out)
+        self.assertIn("src/billing/charge.py", out,
+                      "the stale report should name the file, not fall back to "
+                      "'its anchored files':\n" + out)
 
 
 class TestCliRobustness(Base):

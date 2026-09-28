@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
@@ -65,7 +65,7 @@ def changed_since(rev):
         return None
     if _run(["git", "cat-file", "-t", rev]) != "commit":
         return None
-    out = _run(["git", "diff", "--name-only", rev + "..HEAD"])
+    out = _run(["git", "diff", "--name-only", "--relative", rev + "..HEAD"])
     if not out:
         # rev == HEAD, or the command failed: distinguish
         if _run(["git", "rev-parse", "--short", "HEAD"]) == rev:
@@ -91,14 +91,20 @@ def changed_set(since=None):
         if not probe.strip():
             return None
         for spec in (since + "...HEAD", since + "..HEAD"):
-            out = _run(["git", "diff", "--name-only", spec])
+            out = _run(["git", "diff", "--name-only", "--relative", spec])
             files = set(l for l in out.splitlines() if l.strip())
             if files:
                 return files
         return set()
     files = set()
-    for cmd in (["git", "diff", "--name-only"],
-                ["git", "diff", "--cached", "--name-only"],
+    # --relative is load-bearing, not cosmetic. git reports paths relative to the REPO
+    # ROOT; anchors and ".memory/<file>" are relative to the WORKING DIRECTORY, which is
+    # the memory root. Without --relative the two never match whenever rmem runs from a
+    # subdirectory, so dead-ends-settled matches nothing and reports GREEN while checking
+    # nothing -- a monorepo or service-subdirectory layout silently loses the gate.
+    # (git ls-files --others is already cwd-relative, which is how this inconsistency hid.)
+    for cmd in (["git", "diff", "--name-only", "--relative"],
+                ["git", "diff", "--cached", "--name-only", "--relative"],
                 ["git", "ls-files", "--others", "--exclude-standard"]):
         out = _run(cmd)
         files.update(l for l in out.splitlines() if l.strip())

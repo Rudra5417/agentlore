@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.4.1. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.4.2. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -375,7 +375,7 @@ read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 62 tests, ~20s, stdlib only
+python3 run_tests.py          # 64 tests, ~20s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
@@ -410,6 +410,10 @@ It pins the invariants that caught real bugs:
   leaves a parseable file, and says out loud that history is untouched
 - **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
   areas section naming the control
+- **a memory root that is not the git root is still checked** — git reports changed paths
+  relative to the repo root while `.memory/` and anchors are relative to the working
+  directory; without `--relative` the two never match, so `dead-ends-settled` matched nothing
+  and reported GREEN **while checking nothing** in any monorepo or service-subdirectory layout
 - **`--since` fails closed** — an unresolvable boundary (a sha a shallow clone never
   fetched, `github.event.before` on a new branch) fails the gate instead of silently
   switching dead-ends-settled off; a resolvable one still passes, and the arm-4 shape is
