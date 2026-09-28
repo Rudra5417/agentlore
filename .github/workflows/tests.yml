@@ -56,6 +56,12 @@ jobs:
   # uses it: `uses: ./` resolves this repo's action.yml at the root, with no vendored copy.
   # Both outcomes are asserted -- green on healthy memory, red on broken memory -- so a
   # change that quietly turns the gate into a no-op fails the build here.
+  #
+  # It runs against examples/action-fixture, a deliberately boring always-green fixture,
+  # and NOT against the demo example. Decoupling matters: pointing this job at the demo
+  # would make it inherit that example's memory health, so any branch that legitimately
+  # breaks the demo's memory (exactly what the gate exists to catch) would also fail here,
+  # for the wrong reason. memory-health.yml gates the demo; this job tests the action.
   action:
     runs-on: ubuntu-latest
     steps:
@@ -67,19 +73,23 @@ jobs:
       - name: The action passes a healthy gate
         uses: ./
         with:
-          working-directory: examples/billing-service
+          working-directory: examples/action-fixture
           compile-in-sync: "true"
 
-      - name: Break it -- move code under a memory and leave the memory alone
-        working-directory: examples/billing-service
-        run: echo "# drift introduced by CI" >> src/billing/charge.py
+      - name: Break it -- change the code under a memory and leave the memory alone
+        working-directory: examples/action-fixture
+        run: |
+          # A real semantic change, deliberately NOT a comment-only edit: the tool treats a
+          # reformat or a comment-only change as a notice rather than a failure, so
+          # appending "# drift" would prove nothing at all about the gate.
+          printf 'def thing():\n    return 2\n' > src/thing.py
 
       - name: The action must now fail
         id: broken
         continue-on-error: true
         uses: ./
         with:
-          working-directory: examples/billing-service
+          working-directory: examples/action-fixture
 
       - name: Assert it failed
         run: |
