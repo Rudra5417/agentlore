@@ -1,0 +1,35 @@
+name: memory-health
+
+# The repo's own shipped example gets a live memory gate, the way a consumer repo would.
+# Two things are exercised here that nothing else exercises:
+#   * the PUBLISHED action, resolved by tag (`uses: ...@v1`) with no vendored copy, and
+#   * `--since` against a real pull-request base sha, which is the only way
+#     dead-ends-settled can see what a change actually touched.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Not needed for drift detection -- that is content-based, so a squashed or
+          # shallow history still fails correctly. It IS needed so the base sha of a PR
+          # exists locally, otherwise --since cannot resolve and the gate fails closed.
+          fetch-depth: 0
+
+      - name: MEMORY-HEALTH for the shipped example
+        uses: Rudra5417/rmem@v1
+        with:
+          working-directory: examples/billing-service
+          compile-in-sync: "true"
+          # Only PRs have a boundary. On push this is empty and the check runs without one,
+          # deliberately: `github.event.before` is 40 zeros on a new branch, which is
+          # exactly the unresolvable ref the tool now refuses to accept.
+          since: ${{ github.event.pull_request.base.sha }}

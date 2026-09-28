@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
@@ -75,12 +75,21 @@ def changed_since(rev):
 
 
 def changed_set(since=None):
-    """The files this change touches.
+    """The files this change touches, or None when `since` cannot be resolved.
 
     Working tree by default (staged + unstaged + untracked), or relative to a ref
     when --since is given -- which is what the CI gate passes (the PR base sha).
+
+    None is a SENTINEL, not an empty set. An unresolvable ref -- a sha a shallow clone
+    never fetched, a typo, `github.event.before` on a new branch -- makes `git diff`
+    produce nothing, and an empty change set silently disables dead-ends-settled. That is
+    the same fail-open shape as trusting commit SHAs, so callers must treat None as an
+    error rather than as "nothing changed".
     """
     if since:
+        probe = _run(["git", "rev-parse", "--verify", "--quiet", since + "^{commit}"])
+        if not probe.strip():
+            return None
         for spec in (since + "...HEAD", since + "..HEAD"):
             out = _run(["git", "diff", "--name-only", spec])
             files = set(l for l in out.splitlines() if l.strip())
@@ -508,7 +517,7 @@ def gh_escape(text):
 
 def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None, unsettled=None,
                      hazards=None, contradictions=None, coexisting=None, unvalued=None,
-                     chains=None):
+                     chains=None, unresolved_since=""):
     """Turn every problem into a CI annotation anchored at the offending line."""
     findings = []
     known = set(e["id"] for e in entries)
@@ -584,6 +593,14 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
           'name the control that really enforces it with --enforcement, or add the '
           'CODEOWNERS rule it claims, or drop the hazard: a wish is worse than nothing.'
           % (e["title"], ", ".join(e["anchors"]) or "nothing", why))
+    if unresolved_since:
+        F("error", None, "MEMORY-HEALTH: --since cannot be resolved",
+          'The change boundary "%s" does not resolve in this clone, so the check that catches '
+          'a dead end recorded by the change that settled it is BLIND. This fails the build on '
+          'purpose: an unresolvable boundary yields an empty change set, and reporting "blind" '
+          'as "fine" is the fail-open shape this tool exists to prevent. Fix: fetch the base '
+          'commit (actions/checkout with fetch-depth: 0), pass a sha that exists, or drop '
+          '--since if you do not need that check.' % unresolved_since)
     for a, b in (contradictions or []):
         key = a.get("key", "")
         F("error", b, "MEMORY-HEALTH: two memories contradict each other",
@@ -753,6 +770,12 @@ def cmd_check(args):
     # observed in practice: an agent fixes a problem and records the problem as if it
     # were still live, so the memory warns about a condition its own change removed.
     changed = changed_set(args.since)
+    # Fail closed. If the boundary cannot be resolved this check is blind, and "blind"
+    # must never be reported as "fine": a sha that a shallow clone never fetched would
+    # otherwise disable this check silently, which is the pitfall the whole design exists
+    # to avoid.
+    unresolved_since = args.since if changed is None else ""
+    changed = changed or set()
     unsettled = []
     for e in live:
         if e["type"] != "dead-end" or (e.get("resolved_by") or "").strip():
@@ -764,7 +787,9 @@ def cmd_check(args):
                          and any(anchor_matches(g, f) for g in e["anchors"]))
         if touched:
             unsettled.append((e, touched[:3]))
-    add("dead-ends-settled", not unsettled, "%d unsettled" % len(unsettled))
+    add("dead-ends-settled", not unsettled and not unresolved_since,
+        ("--since %s does not resolve in this clone, so this check cannot see what changed"
+         % unresolved_since) if unresolved_since else "%d unsettled" % len(unsettled))
 
     # 12 a hazard must name a real control and an accountable owner. A prohibition that no
     # mechanism enforces is a wish, and a wish is the worst kind of memory: an agent obeys
@@ -891,7 +916,7 @@ def cmd_check(args):
 
     findings = collect_findings(entries, live, index_ok, fresh, stale, restyled, unsettled,
                                 hazards_unbacked, contradictions, coexisting, unvalued,
-                                chain_problems)
+                                chain_problems, unresolved_since)
 
     if args.brief:
         bad = [n for n, ok, _ in checks if not ok]
@@ -962,6 +987,12 @@ def cmd_check(args):
         for a, b in coexisting:
             print("%s  %s vs %s  -- %s%s" % (DIM, a["id"], b["id"],
                   a.get("coexists_why") or b.get("coexists_why") or "?", OFF))
+    if unresolved_since:
+        print("\n%s--since %s does not resolve in this clone.%s" % (BOLD, unresolved_since, OFF))
+        print("    %s-> the dead-ends-settled check is blind without it, so this fails on purpose.%s"
+              % (DIM, OFF))
+        print("    %s-> fetch the base commit (checkout with fetch-depth: 0), or drop --since.%s"
+              % (DIM, OFF))
     if unvalued:
         print("\n%sclaims with no value -- nothing can be compared with them:%s" % (DIM, OFF))
         for e in unvalued:

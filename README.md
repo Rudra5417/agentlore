@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.4.0. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.4.1. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -339,6 +339,10 @@ Two details the action gets right that a hand-rolled workflow usually does not:
 * `fail-on-broken: false` reports and emits a warning rather than quietly succeeding, because a
   gate that is configured off should say so out loud.
 
+This repository runs its own shipped example through this exact gate on every pull request,
+using the published tag — see `.github/workflows/memory-health.yml`. So the action and the
+`--since` path are exercised continuously rather than only at release time.
+
 If you would rather not depend on a third-party action, vendor the single file and run it
 yourself — that is the next section, and it is the same tool either way.
 
@@ -371,7 +375,7 @@ read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 56 tests, ~20s, stdlib only
+python3 run_tests.py          # 62 tests, ~20s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
@@ -406,6 +410,10 @@ It pins the invariants that caught real bugs:
   leaves a parseable file, and says out loud that history is untouched
 - **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
   areas section naming the control
+- **`--since` fails closed** — an unresolvable boundary (a sha a shallow clone never
+  fetched, `github.event.before` on a new branch) fails the gate instead of silently
+  switching dead-ends-settled off; a resolvable one still passes, and the arm-4 shape is
+  exercised end to end through the real `--since <base-sha>` path
 - **CLI robustness** — `rmem list | head` does not dump a stack trace
 
 CI runs the suite on Python 3.9 and 3.12, then runs the shipped example through its own memory
@@ -416,6 +424,10 @@ gate and asserts the vendored copy still matches the tool at the root.
 * **Contradiction detection covers DECLARED claims only.** Two memories that disagree in prose
   are not caught -- only memories that declare the same `--key` with different `--value`. That
   limit is the main design claim of v0.4.0, not an oversight; the section above is the evidence.
+* **`--since` requires the base commit to be present.** The tool now refuses to run blind,
+  so a `fetch-depth: 1` checkout fails the gate instead of quietly skipping the check. That is
+  the intended direction, but it does mean the failure mode is now "loud error" rather than
+  "silent pass" and the fix is in your checkout config.
 * **No conflict queue as a separate artifact.** `gitmem` emits a browsable `conflicts.json`;
   here a contradiction is a failing check, so it is enforced rather than advisory.
 * **No `rmem move`/re-anchor workflow.** Changing which files a memory covers means

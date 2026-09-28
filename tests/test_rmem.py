@@ -764,6 +764,69 @@ class TestRetirementChains(Base):
         self.assertEqual(out.count("a cycle"), 1, "a 2-cycle must be reported once:\n" + out)
 
 
+class TestSinceBoundary(Base):
+    """`--since` is the CI boundary, and an unresolvable one must fail closed.
+
+    An unresolvable ref produces an empty `git diff`, which silently disables
+    dead-ends-settled. That is the same fail-open shape as trusting commit SHAs: a shallow
+    clone that never fetched the base sha would quietly switch off the check that catches a
+    dead end recorded by the change that settled it.
+    """
+
+    def test_an_unresolvable_since_fails_closed(self):
+        code, out = self.f.rmem("check", "--brief", "--since", "deadbeef")
+        self.assertEqual(code, 1, "an unresolvable boundary must not go quiet:\n" + out)
+        self.assertIn("dead-ends-settled", out)
+
+    def test_an_all_zero_since_fails_closed(self):
+        """`github.event.before` on a new branch push is 40 zeros -- a real-world input."""
+        code, out = self.f.rmem("check", "--brief", "--since", "0" * 40)
+        self.assertEqual(code, 1, out)
+
+    def test_a_resolvable_since_is_green(self):
+        code, out = self.f.rmem("check", "--brief", "--since", "HEAD")
+        self.assertEqual(code, 0, out)
+
+    def test_no_since_at_all_is_still_green(self):
+        code, out = self.f.rmem("check", "--brief")
+        self.assertEqual(code, 0, out)
+
+    def test_the_message_says_how_to_fix_it(self):
+        code, out = self.f.rmem("check", "--since", "deadbeef")
+        self.assertIn("does not resolve", out)
+        self.assertIn("fetch-depth", out, "must name the actual CI fix:\n" + out)
+
+    def test_the_check_fires_on_a_real_boundary(self):
+        """The arm-4 shape end to end: fix the code and record the problem you just fixed.
+
+        This is the scenario observed twice from independent agent runs, here driven through
+        the real CI path (--since <base-sha>) rather than by direct construction.
+        """
+        base = self.f.git("rev-parse", "HEAD").stdout.strip()
+        self.f.write("src/billing/charge.py", "def charge():\n    return 99\n")
+        eid = self.f.add("--type", "dead-end",
+                         "--title", "The refund window rejects credit notes",
+                         "--body", "Settled by this change.",
+                         "--anchor", "src/billing/**", "--evidence", "observed in prod",
+                         "--author", "test")
+        self.f.commit("fix it and record it")
+        self.f.rmem("index")
+
+        code, out = self.f.rmem("check", "--brief", "--since", base)
+        self.assertEqual(code, 1, "the gate must catch this:\n" + out)
+        self.assertIn("dead-ends-settled", out)
+        # the same change also staled the seeded convention: two different checks, two
+        # different reasons, both of which a reviewer has to resolve in this PR
+        self.assertIn("anchors-not-stale", out)
+
+        # The in-PR resolution: the convention is still true, the dead end was settled here.
+        self.f.rmem("verify", self.conv)
+        self.f.rmem("verify", eid, "--resolved-by", "this change")
+        self.f.rmem("index")
+        code, out = self.f.rmem("check", "--brief", "--since", base)
+        self.assertEqual(code, 0, out)
+
+
 class TestCliRobustness(Base):
     def test_version_is_reported(self):
         code, out = self.f.rmem("--version")
