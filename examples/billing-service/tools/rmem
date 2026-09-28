@@ -1,0 +1,1093 @@
+#!/usr/bin/env python3
+"""rmem - git-reviewable repo memory for coding agents. Prototype v0.1.0.
+
+Typed memories live as markdown in .memory/ and are versioned with the code, so
+every write shows up as a reviewable diff in the PR that motivated it.
+
+Design rules baked in:
+  * markdown is the source of truth; the SQLite index is DERIVED and gitignored
+  * every memory is anchored to file globs, so code drift makes it STALE
+  * memory is a hint, never ground truth -- check reports, it does not enforce
+"""
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import re
+import sqlite3
+import subprocess
+import sys
+import uuid
+from datetime import date, datetime
+from pathlib import Path
+
+VERSION = "0.1.0"
+MEM = Path(".memory")
+INDEX = MEM / "index.db"
+SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
+FILES = {"decision": "decisions.md", "dead-end": "dead-ends.md",
+         "convention": "conventions.md", "hazard": "hazards.md"}
+PREFIX = {"decision": "DEC", "dead-end": "DEAD", "convention": "CONV", "hazard": "HAZ"}
+HEADING = {"decision": "Decisions", "dead-end": "Dead ends",
+           "convention": "Conventions", "hazard": "Hazards"}
+FENCE = re.compile(r"<!--\s*rmem\s*(.*?)-->", re.S)
+GREEN, RED, DIM, BOLD, OFF = "\033[32m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
+
+
+# ---------------------------------------------------------------- git helpers
+
+def _run(cmd):
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        return p.stdout.strip() if p.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def is_git():
+    return _run(["git", "rev-parse", "--is-inside-work-tree"]) == "true"
+
+
+def head_rev():
+    return _run(["git", "rev-parse", "--short", "HEAD"])
+
+
+def changed_since(rev):
+    """Files changed between rev and HEAD, or None if we cannot tell."""
+    if not rev or not is_git():
+        return None
+    if _run(["git", "cat-file", "-t", rev]) != "commit":
+        return None
+    out = _run(["git", "diff", "--name-only", rev + "..HEAD"])
+    if not out:
+        # rev == HEAD, or the command failed: distinguish
+        if _run(["git", "rev-parse", "--short", "HEAD"]) == rev:
+            return []
+        return None
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def changed_set(since=None):
+    """The files this change touches.
+
+    Working tree by default (staged + unstaged + untracked), or relative to a ref
+    when --since is given -- which is what the CI gate passes (the PR base sha).
+    """
+    if since:
+        for spec in (since + "...HEAD", since + "..HEAD"):
+            out = _run(["git", "diff", "--name-only", spec])
+            files = set(l for l in out.splitlines() if l.strip())
+            if files:
+                return files
+        return set()
+    files = set()
+    for cmd in (["git", "diff", "--name-only"],
+                ["git", "diff", "--cached", "--name-only"],
+                ["git", "ls-files", "--others", "--exclude-standard"]):
+        out = _run(cmd)
+        files.update(l for l in out.splitlines() if l.strip())
+    return files
+
+
+def repo_name():
+    if is_git():
+        url = _run(["git", "remote", "get-url", "origin"])
+        if url:
+            return url.rstrip("/").split("/")[-1].replace(".git", "")
+        return Path.cwd().name
+    return Path.cwd().name
+
+
+# ------------------------------------------------------------------- parsing
+
+def parse_file(path):
+    """Return the list of entries in one markdown file, each with its line number
+    (line numbers matter: CI annotations must point at the entry in the diff)."""
+    if not path.exists():
+        return []
+    text = path.read_text()
+    marks = list(re.finditer(r"(?m)^##[ \t]+", text))
+    entries = []
+    for i, mark in enumerate(marks):
+        stop = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+        chunk = text[mark.end():stop]
+        nl = chunk.find("\n")
+        title = (chunk[:nl] if nl >= 0 else chunk).strip()
+        rest = chunk[nl + 1:] if nl >= 0 else ""
+        metacomment = {}
+        m = FENCE.search(rest)
+        if m:
+            for line in m.group(1).strip().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or ":" not in line:
+                    continue
+                key, val = line.split(":", 1)
+                metacomment[key.strip()] = val.strip()
+            rest = rest[:m.start()] + rest[m.end():]
+        e = dict(metacomment)
+        e["title"] = title
+        e["body"] = rest.strip()
+        e["file"] = path.name
+        e["lineno"] = text.count("\n", 0, mark.start()) + 1
+        for key in ("anchors", "supersedes"):
+            e[key] = [x for x in re.split(r"[,\s]+", e.get(key, "")) if x]
+        e.setdefault("id", "")
+        e.setdefault("type", "")
+        e.setdefault("status", "accepted")
+        entries.append(e)
+    return entries
+
+
+def load_all():
+    return [e for name in SOURCES for e in parse_file(MEM / name)]
+
+
+def source_hash():
+    h = hashlib.sha256()
+    for name in SOURCES:
+        p = MEM / name
+        h.update(name.encode())
+        h.update(p.read_bytes() if p.exists() else b"")
+    return h.hexdigest()
+
+
+# ------------------------------------------------------------------- anchors
+
+def anchor_matches(glob, path):
+    g = glob.strip()
+    if g.endswith("/**"):
+        g = g[:-3]
+    elif g.endswith("/*"):
+        g = g[:-2]
+    if any(ch in g for ch in "*?["):
+        return fnmatch.fnmatch(path, g)
+    g = g.rstrip("/")
+    return path == g or path.startswith(g + "/")
+
+
+def anchor_files(glob):
+    """Every real FILE an anchor matches.
+
+    Two traps: (1) a trailing '/**' makes pathlib.glob yield DIRECTORIES only, so
+    matching on the glob result never sees files; (2) an empty leftover directory
+    after a file is deleted must NOT count as the code still existing.
+    """
+    g = glob.strip().rstrip("/")
+    for suffix in ("/**", "/*"):
+        if g.endswith(suffix):
+            g = g[:-len(suffix)]
+            break
+    try:
+        if any(ch in g for ch in "*?["):
+            return sorted(x for x in Path(".").glob(g) if x.is_file())
+        p = Path(g)
+        if p.is_file():
+            return [p]
+        return sorted(x for x in p.rglob("*") if x.is_file()) if p.is_dir() else []
+    except Exception:
+        return []
+
+
+def anchor_has_files(glob):
+    return bool(anchor_files(glob))
+
+
+# Line-comment leader per extension, for the formatting-insensitive view only.
+COMMENT_LEADER = {
+    ".py": "#", ".rb": "#", ".sh": "#", ".bash": "#", ".zsh": "#", ".pl": "#",
+    ".yaml": "#", ".yml": "#", ".toml": "#", ".ini": "#", ".cfg": "#",
+    ".js": "//", ".jsx": "//", ".ts": "//", ".tsx": "//", ".go": "//", ".rs": "//",
+    ".java": "//", ".c": "//", ".h": "//", ".cpp": "//", ".cc": "//", ".cs": "//",
+    ".swift": "//", ".kt": "//", ".scala": "//", ".php": "//",
+}
+
+
+def format_view(path):
+    """A formatting-insensitive view of one file: comments, blank lines and
+    whitespace runs removed.
+
+    Deliberately NOT a parser and NOT the authority. The RAW content stays the
+    authority; this view can only ever DOWNGRADE an already-detected change from
+    "the code changed" to "the code was reformatted". So a bug here can never hide
+    a real change -- it can only make the report less alarming, never silent.
+    """
+    try:
+        text = path.read_text()
+    except Exception:
+        return ""
+    leader = COMMENT_LEADER.get(path.suffix.lower())
+    lines = []
+    for line in text.splitlines():
+        if leader:
+            if line.lstrip().startswith(leader):
+                continue
+            line = line.split(leader, 1)[0]
+        line = re.sub(r"\s+", " ", line).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def anchor_fingerprints(entry):
+    """(raw, formatting-insensitive) fingerprints of every anchored file."""
+    raw, view = [], []
+    for g in (entry.get("anchors") or []):
+        for p in anchor_files(g):
+            try:
+                content = p.read_bytes()
+            except Exception:
+                content = b""
+            raw.append("%s:%s" % (p.as_posix(), hashlib.sha256(content).hexdigest()[:16]))
+            view.append("%s:%s" % (p.as_posix(),
+                        hashlib.sha256(format_view(p).encode()).hexdigest()[:16]))
+    if not raw:
+        return "", ""
+    return (hashlib.sha256("\n".join(sorted(raw)).encode()).hexdigest()[:16],
+            hashlib.sha256("\n".join(sorted(view)).encode()).hexdigest()[:16])
+
+
+def anchor_fingerprint(entry):
+    """The raw content fingerprint: the authority for drift.
+
+    Deliberately NOT based on commit SHAs. Squash-merging and rebasing -- the
+    default on many repos -- rewrite history, so a stored commit becomes
+    unreachable and the staleness check would silently stop working. A memory
+    system must never fail open, so drift is decided by CONTENT.
+    """
+    return anchor_fingerprints(entry)[0]
+
+
+# ------------------------------------------------------------- CODEOWNERS glue
+# A hazard ("do not touch billing") is a POINTER to a control, never the control itself.
+# Nothing in a markdown file stops an agent editing a directory: CODEOWNERS, branch
+# protection and permissions do. So a hazard has to name the mechanism that enforces it,
+# and when it names CODEOWNERS the gate checks that the rule actually exists and covers
+# the anchored path. That is the whole difference between a policy and a wish.
+
+CODEOWNERS_PATHS = (".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS")
+
+
+def anchor_base(glob):
+    """The concrete path a glob anchor stands for, for CODEOWNERS lookups."""
+    g = glob.strip().lstrip("./")
+    for suffix in ("/**", "/*"):
+        if g.endswith(suffix):
+            return g[:-len(suffix)]
+    if any(ch in g for ch in "*?["):
+        return g.rsplit("/", 1)[0] if "/" in g else g
+    return g
+
+
+def codeowners_rules():
+    """(source, [(pattern, owners)]) in file order -- later rules win."""
+    for name in CODEOWNERS_PATHS:
+        p = Path(name)
+        if not p.is_file():
+            continue
+        rules = []
+        for line in p.read_text().splitlines():
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) >= 2:
+                rules.append((parts[0], parts[1:]))
+        return name, rules
+    return None, []
+
+
+def codeowners_match(pattern, path):
+    """Best-effort match of a CODEOWNERS pattern against a repo path.
+
+    Not a reimplementation of GitHub's matcher (which is gitignore-flavoured and has
+    subtleties around `**` and anchoring). Deliberately errs toward finding a rule: a
+    false "covered" is a softer failure than failing a repo that is in fact protected.
+    """
+    pat = pattern.strip()
+    anchored = pat.startswith("/")
+    if anchored:
+        pat = pat[1:]
+    path = path.lstrip("./")
+    if pat in ("*", "**"):
+        return True
+    if pat.endswith("/"):
+        base = pat.rstrip("/")
+        return path == base or path.startswith(base + "/")
+    if pat.endswith("/**"):
+        base = pat[:-3].rstrip("/")
+        return path == base or path.startswith(base + "/")
+    if not anchored:
+        for part in path.split("/"):
+            if fnmatch.fnmatch(part, pat):
+                return True
+    return fnmatch.fnmatch(path, pat)
+
+
+def codeowners_owners(path):
+    """Owners CODEOWNERS assigns to path, or [] if no rule covers it."""
+    _, rules = codeowners_rules()
+    owners = []
+    for pat, own in rules:
+        if codeowners_match(pat, path):
+            owners = own              # last match wins, per CODEOWNERS semantics
+    return owners
+
+
+def stale_hits(entry, changed):
+    if changed is None:
+        return None
+    globs = entry.get("anchors") or []
+    if not globs:
+        return []
+    hits = []
+    for f in changed:
+        if f.startswith(".memory/"):
+            continue
+        for g in globs:
+            if anchor_matches(g, f):
+                hits.append(f)
+                break
+    return hits
+
+
+# --------------------------------------------------------------------- index
+
+def cmd_index(args):
+    MEM.mkdir(exist_ok=True)
+    entries = load_all()
+    if INDEX.exists():
+        INDEX.unlink()
+    con = sqlite3.connect(str(INDEX))
+    con.executescript(
+        "CREATE TABLE entries (id TEXT PRIMARY KEY, type TEXT, status TEXT, title TEXT,"
+        " file TEXT, body TEXT, author TEXT, created TEXT, verified_at TEXT, review_by TEXT,"
+        " anchors TEXT, supersedes TEXT, evidence TEXT);"
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);"
+    )
+    for e in entries:
+        con.execute(
+            "INSERT OR REPLACE INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (e["id"], e["type"], e["status"], e["title"], e["file"], e["body"],
+             e.get("author", ""), e.get("created", ""), e.get("verified_at", ""),
+             e.get("review_by", ""), " ".join(e["anchors"]),
+             " ".join(e["supersedes"]), e.get("evidence", "")),
+        )
+    con.execute("INSERT INTO meta VALUES ('source_hash', ?)", (source_hash(),))
+    con.execute("INSERT INTO meta VALUES ('built_at', ?)", (datetime.now().isoformat(timespec="seconds"),))
+    con.commit()
+    con.close()
+    print("index built: %d memories -> %s" % (len(entries), INDEX))
+    return 0
+
+
+def cmd_init(args):
+    MEM.mkdir(exist_ok=True)
+    for name in SOURCES:
+        p = MEM / name
+        if not p.exists():
+            kind = [k for k, v in FILES.items() if v == name][0]
+            p.write_text("# %s\n\n<!-- rmem: one entry per '## ' heading -->\n" % HEADING[kind])
+    gi = Path(".gitignore")
+    line = ".memory/index.db"
+    existing = gi.read_text() if gi.exists() else ""
+    if line not in existing:
+        gi.write_text(existing.rstrip("\n") + ("\n" if existing else "") + line + "\n")
+    print("initialised .memory/ (%s)" % ", ".join(SOURCES))
+    print("  source of truth: .memory/*.md   derived+gitignored: .memory/index.db")
+    return cmd_index(args)
+
+
+# ----------------------------------------------------------------------- add
+
+def cmd_add(args):
+    MEM.mkdir(exist_ok=True)
+    fname = FILES[args.type]
+    path = MEM / fname
+    if not path.exists():
+        path.write_text("# %s\n" % HEADING[args.type])
+    eid = "%s-%s-%s" % (PREFIX[args.type], date.today().isoformat(), uuid.uuid4().hex[:4])
+    verified = head_rev() or ""
+    lines = [
+        "",
+        "## %s%s" % (args.title, " (settled)" if args.resolved_by else ""),
+        "<!-- rmem",
+        "id: %s" % eid,
+        "type: %s" % args.type,
+        "status: %s" % args.status,
+    ]
+    if args.anchor:
+        lines.append("anchors: %s" % " ".join(args.anchor))
+    if args.evidence:
+        lines.append("evidence: %s" % args.evidence)
+    if args.owner:
+        lines.append("owner: %s" % args.owner)
+    if args.enforcement:
+        lines.append("enforcement: %s" % args.enforcement)
+    if args.supersedes:
+        lines.append("supersedes: %s" % " ".join(args.supersedes))
+    raw_fp, norm_fp = anchor_fingerprints({"anchors": args.anchor})
+    lines += [
+        "author: %s" % args.author,
+        "created: %s" % date.today().isoformat(),
+        "verified_at: %s" % verified,
+        "anchor_hash: %s" % raw_fp,
+        "anchor_norm: %s" % norm_fp,
+    ]
+    if args.resolved_by:
+        lines.append("resolved_by: %s" % args.resolved_by)
+    if args.review_by:
+        lines.append("review_by: %s" % args.review_by)
+    lines += ["-->", "", args.body.strip(), ""]
+    with path.open("a") as fh:
+        fh.write("\n".join(lines))
+    print("added %s (%s) -> %s" % (eid, args.type, fname))
+    if not args.anchor:
+        print("  %s! no --anchor: this memory can never go stale.%s" % (RED, OFF))
+    if args.type == "dead-end" and not args.evidence:
+        print("  %s! no --evidence: unsupported dead ends are superstition.%s" % (RED, OFF))
+    if args.type == "hazard" and not args.owner:
+        print("  %s! no --owner: a frozen area with nobody accountable is nobody's problem.%s"
+              % (RED, OFF))
+    if args.type == "hazard" and not args.enforcement:
+        print("  %s! no --enforcement: this file cannot stop anyone editing anything. Name the "
+              "control that actually enforces it (CODEOWNERS, branch protection, permissions), "
+              "or it is a wish.%s" % (RED, OFF))
+    if args.type == "hazard" and args.enforcement and "codeowners" in args.enforcement.lower():
+        missing = [g for g in args.anchor if not codeowners_owners(anchor_base(g))]
+        if missing:
+            print("  %s! enforcement names CODEOWNERS, but no rule covers: %s%s"
+                  % (RED, ", ".join(missing), OFF))
+    return cmd_index(args)
+
+
+# ------------------------------------------------------------------ CI output
+
+def gh_escape(text):
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None, unsettled=None,
+                     hazards=None):
+    """Turn every problem into a CI annotation anchored at the offending line."""
+    findings = []
+    known = set(e["id"] for e in entries)
+
+    def F(level, entry, title, message):
+        findings.append({
+            "level": level, "title": title, "message": message,
+            "file": (".memory/" + entry["file"]) if entry else "",
+            "line": entry["lineno"] if entry else "",
+        })
+
+    for e, hits in stale:
+        F("error", e, "MEMORY-HEALTH: stale memory",
+          '%s "%s" is out of date: %s changed since it was last verified (%s). Resolve it in this PR with '
+          '"rmem verify %s" (still true) or "rmem supersede %s <new-id>" (no longer true).'
+          % (e["id"], e["title"], ", ".join(hits[:4]) or "its anchored files",
+             e.get("verified_at") or "?", e["id"], e["id"]))
+        # The memory file is usually NOT part of this PR's diff, so an annotation on it
+        # would never render inline. Put a second one on the code that invalidated it.
+        for path in hits[:1]:
+            findings.append({
+                "level": "error", "file": path, "line": "",
+                "title": "MEMORY-HEALTH: this change invalidates a memory",
+                "message": 'This change makes %s "%s" (in .memory/%s) out of date. '
+                           'Resolve it in this PR: "rmem verify %s" if it is still true, '
+                           'or "rmem supersede %s <new-id>" if not, then "rmem index".'
+                           % (e["id"], e["title"], e["file"], e["id"], e["id"]),
+            })
+    for e in live:
+        if not (e.get("anchor_hash") or "").strip():
+            F("error", e, "MEMORY-HEALTH: memory not stamped",
+              "%s has no anchor fingerprint, so code drift cannot be detected for it. "
+              "Run: rmem verify %s" % (e["id"], e["id"]))
+        for g in e["anchors"]:
+            if not anchor_has_files(g):
+                F("error", e, "MEMORY-HEALTH: anchor has no code",
+                  "%s is anchored to %s, which no longer exists." % (e["id"], g))
+        if e["type"] == "dead-end" and not e.get("evidence"):
+            F("error", e, "MEMORY-HEALTH: unsupported dead end",
+              '%s "%s" has no evidence. Add --evidence with the commit, PR or error that proved it.'
+              % (e["id"], e["title"]))
+        rb = e.get("review_by", "")
+        if rb and rb < date.today().isoformat():
+            F("error", e, "MEMORY-HEALTH: review overdue", "%s was due for review on %s." % (e["id"], rb))
+        for ref in e["supersedes"]:
+            if ref not in known:
+                F("error", e, "MEMORY-HEALTH: broken supersession",
+                  "%s claims to supersede %s, which does not exist." % (e["id"], ref))
+    for e, touched in (unsettled or []):
+        F("error", e, "MEMORY-HEALTH: dead end rode its own fix",
+          '"%s" is anchored to %s, which this same change also modified -- so the memory '
+          'describes the world BEFORE the change and now reads as a live warning about a '
+          'condition your change removed. State whether it still holds: '
+          'rmem verify %s --resolved-by "<commit or PR that settled it>". If it is really '
+          'settled, retype it as a decision and write the title about the CURRENT rule.'
+          % (e["title"], ", ".join(touched), e["id"]))
+        for path in touched[:1]:
+            findings.append({
+                "level": "error", "file": path, "line": "",
+                "title": "MEMORY-HEALTH: this change may have settled a dead end",
+                "message": "This file settled the dead end recorded as %s. Make sure that "
+                           "memory now reads as history, not as a live warning." % e["id"],
+            })
+    for e in (restyled or []):
+        F("notice", e, "MEMORY-HEALTH: reformatted, content equivalent",
+          "%s is anchored to files that were reformatted or re-commented. The code did not "
+          "meaningfully change, so this is not a failure. Run rmem verify %s to clear it."
+          % (e["id"], e["id"]))
+    for e, why in (hazards or []):
+        F("error", e, "MEMORY-HEALTH: unbacked hazard",
+          '"%s" freezes %s but nothing enforces it (%s). A memory cannot stop an agent '
+          'editing a directory -- CODEOWNERS, branch protection or permissions do. Either '
+          'name the control that really enforces it with --enforcement, or add the '
+          'CODEOWNERS rule it claims, or drop the hazard: a wish is worse than nothing.'
+          % (e["title"], ", ".join(e["anchors"]) or "nothing", why))
+    if not index_ok:
+        F("error", None, "MEMORY-HEALTH: no index", "The derived index is missing. Run: rmem index")
+    elif not index_fresh:
+        F("error", None, "MEMORY-HEALTH: index out of date",
+          "The markdown was edited without rebuilding the index. Run: rmem index")
+    return findings
+
+
+def emit_github(findings, passed, total, n_entries, n_stale):
+    import os
+    for f in findings:
+        if f["file"] and f["line"]:
+            loc = "file=%s,line=%s," % (f["file"], f["line"])
+        elif f["file"]:
+            # file-level annotation: renders on the PR even with no line in the hunk
+            loc = "file=%s," % f["file"]
+        else:
+            loc = ""
+        print("::%s %stitle=%s::%s" % (f["level"], loc, f["title"], gh_escape(f["message"])))
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if not path:
+        return
+    icon = "PASS" if passed == total else "FAIL"
+    out = ["## MEMORY-HEALTH %s: %d/%d" % (icon, passed, total), "",
+           "`%d memories, %d stale, %d findings`" % (n_entries, n_stale, len(findings)), ""]
+    if findings:
+        out += ["| where | what |", "|---|---|"]
+        for f in findings:
+            where = ("`%s:%s`" % (f["file"], f["line"])) if f["file"] else "repo-wide"
+            out.append("| %s | %s |" % (where, f["message"]))
+    else:
+        out.append("All memory checks pass. Memory is a hint; code and failing tests win.")
+    out += ["", "_Resolve a stale memory in this PR: `rmem verify <id>` (still true) "
+            "or `rmem supersede <id> <new-id>` (no longer true). Then `rmem index`._"]
+    try:
+        with open(path, "a") as fh:
+            fh.write("\n".join(out) + "\n")
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------- check
+
+def cmd_check(args):
+    if not MEM.exists():
+        print("MEMORY-HEALTH: 0/1 %sRED%s - no .memory/ in %s (run: rmem init)" % (RED, OFF, Path.cwd()))
+        return 1
+
+    checks = []
+    notes = []
+
+    def add(name, ok, note=""):
+        checks.append((name, ok, note))
+
+    entries = load_all()
+
+    # 1 index present
+    index_ok = INDEX.exists()
+    add("index-present", index_ok, "run: rmem index")
+
+    # 2 index fresh
+    fresh = False
+    detail = "n/a (no index)"
+    if index_ok:
+        try:
+            con = sqlite3.connect(str(INDEX))
+            row = con.execute("SELECT value FROM meta WHERE key='source_hash'").fetchone()
+            con.close()
+            have = row[0] if row else ""
+            fresh = have == source_hash()
+            detail = "run: rmem index" if not fresh else ""
+        except Exception as exc:
+            detail = "index unreadable (%s)" % exc
+    add("index-fresh", fresh, detail)
+
+    # 3 entries parse / have ids
+    missing = [e["title"] for e in entries if not e["id"]]
+    add("ids-present", not missing, "no id: %s" % ", ".join(missing[:3]))
+
+    # 4 ids unique
+    seen, dups = set(), []
+    for e in entries:
+        if e["id"] in seen:
+            dups.append(e["id"])
+        seen.add(e["id"])
+    add("ids-unique", not dups, "duplicate: %s" % ", ".join(dups[:3]))
+
+    # 5 supersedes resolve
+    known = set(e["id"] for e in entries) | set(e["id"] for e in entries if e["id"])
+    dangling = []
+    for e in entries:
+        for ref in e["supersedes"]:
+            if ref not in known:
+                dangling.append("%s -> %s" % (e["id"], ref))
+    add("supersedes-resolve", not dangling, "; ".join(dangling[:3]))
+
+    # retired memories are history, not obligations: only live entries are checked
+    live = [e for e in entries if e["status"] not in ("superseded", "deprecated")]
+
+    # 6 anchors resolve to real files
+    bad_anchor = []
+    for e in live:
+        for g in e["anchors"]:
+            if not anchor_has_files(g):
+                bad_anchor.append("%s anchors %s (no such file)" % (e["id"], g))
+    add("anchors-resolve", not bad_anchor, "; ".join(bad_anchor[:3]))
+
+    # 7 dead ends carry evidence
+    unevidenced = [e["id"] for e in live if e["type"] == "dead-end" and not e.get("evidence")]
+    add("dead-ends-evidenced", not unevidenced, ", ".join(unevidenced[:3]))
+
+    # 8 review_by not expired
+    expired = []
+    today = date.today().isoformat()
+    for e in live:
+        rb = e.get("review_by", "")
+        if rb and rb < today:
+            expired.append("%s (review_by %s)" % (e["id"], rb))
+    add("reviews-current", not expired, "; ".join(expired[:3]))
+
+    # 9 anchors have not drifted since they were stamped. Decided by CONTENT, not by
+    # git history: a squashed or rebased commit must never be able to disable this.
+    unverifiable, stale, restyled = [], [], []
+    for e in live:
+        stored = (e.get("anchor_hash") or "").strip()
+        if not stored:
+            unverifiable.append(e["id"])
+            continue
+        raw_fp, norm_fp = anchor_fingerprints(e)
+        if raw_fp == stored:
+            continue
+        stored_norm = (e.get("anchor_norm") or "").strip()
+        if stored_norm and norm_fp == stored_norm:
+            # Bytes differ, meaning does not: reformatted. Still reported -- never
+            # silent -- but it is not a lie, so it does not break the build.
+            restyled.append(e)
+            continue
+        hits = stale_hits(e, changed_since(e.get("verified_at", "")))
+        stale.append((e, sorted(set(hits or []))))
+    add("anchors-not-stale", not stale, "%d out of date" % len(stale))
+
+    # 10 every live memory is stamped, so drift is detectable at all (fail closed)
+    add("anchors-stamped", not unverifiable, "unstamped: %s" % ", ".join(unverifiable[:3]))
+
+    # 11 a dead end may not ride the change that settled it. This catches the failure
+    # observed in practice: an agent fixes a problem and records the problem as if it
+    # were still live, so the memory warns about a condition its own change removed.
+    changed = changed_set(args.since)
+    unsettled = []
+    for e in live:
+        if e["type"] != "dead-end" or (e.get("resolved_by") or "").strip():
+            continue
+        if (".memory/" + e["file"]) not in changed:
+            continue
+        touched = sorted(f for f in changed
+                         if f != ".memory/" + e["file"]
+                         and any(anchor_matches(g, f) for g in e["anchors"]))
+        if touched:
+            unsettled.append((e, touched[:3]))
+    add("dead-ends-settled", not unsettled, "%d unsettled" % len(unsettled))
+
+    # 12 a hazard must name a real control and an accountable owner. A prohibition that no
+    # mechanism enforces is a wish, and a wish is the worst kind of memory: an agent obeys
+    # it and refuses legitimate work, or ignores it and ships an incident. When the hazard
+    # names CODEOWNERS, verify the rule actually covers the anchored path -- so the memory
+    # and the control cannot drift apart, which is the only way a soft store can carry a
+    # hard policy.
+    hazards_unbacked = []
+    for e in live:
+        if e["type"] != "hazard":
+            continue
+        why = []
+        if not (e.get("owner") or "").strip():
+            why.append("no owner")
+        enf = (e.get("enforcement") or "").strip()
+        if not enf:
+            why.append("no enforcement named")
+        elif "codeowners" in enf.lower():
+            for g in e["anchors"]:
+                owners = codeowners_owners(anchor_base(g))
+                if not owners:
+                    why.append("CODEOWNERS has no rule for %s" % g)
+                    continue
+                # If the hazard names an owner as a CODEOWNERS-style handle, the control must
+                # agree with it. Otherwise a memory can claim "owned by @epic/security" while
+                # CODEOWNERS puts the path under a catch-all -- the claim is unbacked even
+                # though the path is nominally covered.
+                claimed = (e.get("owner") or "").strip()
+                if "@" in claimed or "/" in claimed:
+                    norm = lambda s: s.lstrip("@").lower()
+                    if norm(claimed) not in [norm(o) for o in owners]:
+                        why.append("%s: CODEOWNERS assigns %s, hazard claims %s"
+                                   % (g, " ".join(owners), claimed))
+        if why:
+            hazards_unbacked.append((e, "; ".join(why)))
+    add("hazards-enforced", not hazards_unbacked, "%d unbacked" % len(hazards_unbacked))
+
+    passed = sum(1 for _, ok, _ in checks if ok)
+    total = len(checks)
+    color = GREEN if passed == total else RED
+
+    findings = collect_findings(entries, live, index_ok, fresh, stale, restyled, unsettled,
+                                hazards_unbacked)
+
+    if args.brief:
+        bad = [n for n, ok, _ in checks if not ok]
+        tail = "" if not bad else " -- " + ", ".join(bad)
+        print("MEMORY-HEALTH: %d/%d %s%s" % (passed, total, "GREEN" if passed == total else "BROKEN", tail))
+        if args.github:
+            emit_github(findings, passed, total, len(entries), len(stale))
+        return 0 if passed == total else 1
+
+    print("%sMEMORY-HEALTH: %d/%d %s%s" % (color, passed, total,
+          "GREEN" if passed == total else "BROKEN", OFF)
+          + "  %s(%d memories, %d stale, %s)%s" % (
+              DIM, len(entries), len(stale), repo_name(), OFF))
+    for name, ok, note in checks:
+        mark = GREEN + "ok  " + OFF if ok else RED + "FAIL" + OFF
+        print("  %s %s%s" % (mark, name, ("  -- " + note) if note and not ok else ""))
+    if stale:
+        print("\n%sstale memories (code moved, memory did not):%s" % (BOLD, OFF))
+        for e, hits in stale:
+            print("  %s%s%s  %s" % (BOLD, e["id"], OFF, e["title"]))
+            print("    anchored to %s" % (", ".join(e["anchors"]) or "-"))
+            print("    changed since %s: %s" % (e.get("verified_at") or "-",
+                  ", ".join(hits[:4]) or "anchor content changed"))
+            print("    %s-> re-verify, or run: rmem supersede %s%s" % (DIM, e["id"], OFF))
+    if unverifiable:
+        print("\n%s%d memories have no anchor fingerprint, so drift cannot be detected: %s%s"
+              % (DIM, len(unverifiable), ", ".join(unverifiable[:5]), OFF))
+        print("%s-> stamp them: rmem verify <id>%s" % (DIM, OFF))
+    if unsettled:
+        print("\n%sdead ends that rode the change that settled them:%s" % (BOLD, OFF))
+        for e, touched in unsettled:
+            print("  %s%s%s  %s" % (BOLD, e["id"], OFF, e["title"]))
+            print("    anchored to %s, changed in this same change: %s"
+                  % (", ".join(e["anchors"]), ", ".join(touched)))
+            print("    %s-> this memory now reads as a live warning about a condition your"
+                  " change removed.%s" % (DIM, OFF))
+            print("    %s-> state it: rmem verify %s --resolved-by \"<what settled it>\"%s"
+                  % (DIM, e["id"], OFF))
+            print("    %s-> or retype it as a decision and write the title about the CURRENT"
+                  " rule.%s" % (DIM, OFF))
+    if hazards_unbacked:
+        print("\n%sunbacked hazards (a frozen area nothing actually enforces):%s" % (BOLD, OFF))
+        for e, why in hazards_unbacked:
+            print("  %s%s%s  %s" % (BOLD, e["id"], OFF, e["title"]))
+            print("    claims: %s" % (", ".join(e["anchors"]) or "-"))
+            print("    problem: %s" % why)
+            print("    %s-> a memory cannot block an edit. Name the real control, add the"
+                  " CODEOWNERS rule, or drop the hazard.%s" % (DIM, OFF))
+    if restyled:
+        print("\n%sreformatted (bytes changed, content equivalent -- no action needed):%s"
+              % (DIM, OFF))
+        for e in restyled:
+            print("%s  %s  %s%s" % (DIM, e["id"], e["title"], OFF))
+    print("\n%snote: memory is a hint. code and failing tests win.%s" % (DIM, OFF))
+    if findings:
+        print("%s%d finding(s) -> %s%s" % (DIM, len(findings),
+              "annotations on the diff + job summary" if args.github else "fix before merging", OFF))
+    if args.github:
+        emit_github(findings, passed, total, len(entries), len(stale))
+    return 0 if passed == total else 1
+
+
+# -------------------------------------------------------------------- recall
+
+def cmd_recall(args):
+    task = " ".join(args.task)
+    terms = [t for t in re.findall(r"[a-z0-9]+", task.lower()) if len(t) > 2]
+    rows = load_all()
+    scored = []
+    for e in rows:
+        if e["status"] in ("superseded", "deprecated") and not args.all:
+            continue
+        blob_title = (e["title"] + " " + " ".join(e["anchors"])).lower()
+        blob_body = e["body"].lower()
+        score = sum(4 for t in terms if t in blob_title)
+        score += sum(1 for t in terms if t in blob_body)
+        if score and e["status"] == "accepted":
+            score += 2
+        if score:
+            scored.append((score, e))
+    scored.sort(key=lambda x: -x[0])
+    picked = scored[: args.limit]
+    if not picked:
+        print("REPO MEMORY (%s): nothing relevant to %r" % (repo_name(), task))
+        return 0
+    print("REPO MEMORY (%s) -- %d of %d memories, ranked for %r" % (repo_name(), len(picked), len(rows), task))
+    budget = args.budget
+    for i, (score, e) in enumerate(picked):
+        body = " ".join(e["body"].split())
+        if len(body) > 200:
+            body = body[:197] + "..."
+        block = "[%s] %s/%s  scope: %s\n%s\n  %s" % (
+            e["id"], e["type"], e["status"], ", ".join(e["anchors"]) or "-",
+            e["title"], body)
+        if e.get("evidence"):
+            block += "\n  evidence: " + e["evidence"]
+        if len(block) + 2 > budget:
+            print("  ... %d more trimmed for context budget" % (len(picked) - i))
+            break
+        budget -= len(block) + 2
+        print("\n" + block)
+    return 0
+
+
+# ------------------------------------------------------------------- compile
+
+def cmd_compile(args):
+    """Emit the always-on conventions into AGENTS.md (the file agents already read)."""
+    entries = [e for e in load_all() if e["type"] == "convention" and e["status"] == "accepted"]
+    hazards = [e for e in load_all() if e["type"] == "hazard" and e["status"] == "accepted"]
+    agent = Path("AGENTS.md")
+    body = ["<!-- rmem:begin (generated from .memory/ - do not edit) -->",
+            "## House rules", ""]
+    if not entries:
+        body.append("_(none recorded)_")
+    for e in entries:
+        scope = (" `%s`" % ", ".join(e["anchors"])) if e["anchors"] else ""
+        body.append("- **%s**%s" % (e["title"], scope))
+        if e["body"]:
+            body.append("  %s" % " ".join(e["body"].split()))
+    # Hazards compile differently on purpose: they are stated as frozen areas with the
+    # control named, so the agent knows this is a platform boundary and not a suggestion
+    # it may weigh against the task.
+    if hazards:
+        body += ["", "### Frozen areas", "",
+                 "_Do not edit these. The enforcement lives in the repo's controls, not in "
+                 "this file._", ""]
+        for e in hazards:
+            scope = (" `%s`" % ", ".join(e["anchors"])) if e["anchors"] else ""
+            who = (" -- owner: %s" % e["owner"]) if e.get("owner") else ""
+            enf = ("; enforced by: %s" % e["enforcement"]) if e.get("enforcement") else ""
+            body.append("- **%s**%s%s%s" % (e["title"], scope, who, enf))
+    body += ["", "<!-- rmem:end -->"]
+    block = "\n".join(body)
+    text = agent.read_text() if agent.exists() else "# AGENTS.md\n"
+    if "<!-- rmem:begin" in text:
+        text = re.sub(r"<!-- rmem:begin.*?<!-- rmem:end -->", block, text, flags=re.S)
+    else:
+        text = text.rstrip("\n") + "\n\n" + block + "\n"
+    agent.write_text(text)
+    print("compiled %d conventions into AGENTS.md" % len(entries))
+    return 0
+
+
+# --------------------------------------------------------------- supersede
+
+def cmd_supersede(args):
+    """Mark a memory superseded by a new one: the reason memories stop lying."""
+    target, new_id = args.old, args.new
+    for name in SOURCES:
+        p = MEM / name
+        if not p.exists():
+            continue
+        blocks = re.split(r"(?m)(?=^##\s+)", p.read_text())
+        hit = False
+        rebuilt = []
+        for b in blocks:
+            # scope the edit to the ONE entry with this id, never the file header
+            if b.startswith("## ") and ("id: " + target) in b:
+                hit = True
+                if "status:" in b:
+                    b = re.sub(r"(?m)^status:.*$", "status: superseded", b)
+                else:
+                    b = re.sub(r"(?m)^(type:.*)$", r"\1\nstatus: superseded", b, count=1)
+                if "superseded_by:" not in b:
+                    b = re.sub(r"(?m)^(status:.*)$", r"\1\nsuperseded_by: " + new_id, b, count=1)
+                # keep two same-titled entries distinguishable in review
+                b = re.sub(r"(?m)^##\s+(.+?)\s*$", r"## \1 (superseded)", b, count=1)
+            rebuilt.append(b)
+        if hit:
+            p.write_text("".join(rebuilt))
+            print("marked %s superseded by %s in %s" % (target, new_id, name))
+            print("  it stays in history as '(superseded)'; reviewers see why it changed.")
+            break
+    else:
+        print("no memory with id %s" % target)
+        return 1
+    return cmd_index(args)
+
+
+# --------------------------------------------------------------------- list
+
+def cmd_verify(args):
+    """Re-stamp a memory against current HEAD, optionally narrowing its scope.
+
+    This is the cheap resolution for a STALE flag: without it the health gate
+    is just nagging, and nagging gates get disabled.
+    """
+    rev = head_rev()
+    if not rev:
+        print("not a git repo / no commits -- cannot stamp a revision")
+        return 1
+    entries = load_all()
+    ids = ([e["id"] for e in entries if e["status"] not in ("superseded", "deprecated")]
+           if args.all else list(args.ids))
+    if not ids:
+        print("nothing to verify (pass ids, or --all)")
+        return 1
+    done = []
+    for name in SOURCES:
+        p = MEM / name
+        if not p.exists():
+            continue
+        text = p.read_text()
+        blocks = re.split(r"(?m)(?=^##\s+)", text)
+        rebuilt = []
+        for b in blocks:
+            if b.startswith("## ") and any(("id: " + eid) in b for eid in ids):
+                if "verified_at:" in b:
+                    b = re.sub(r"(?m)^verified_at:.*$", "verified_at: " + rev, b)
+                else:
+                    b = re.sub(r"(?m)^(type:.*)$", r"\1\nverified_at: " + rev, b, count=1)
+                if args.anchor:
+                    if "anchors:" in b:
+                        b = re.sub(r"(?m)^anchors:.*$", "anchors: " + " ".join(args.anchor), b)
+                    else:
+                        b = re.sub(r"(?m)^(status:.*)$", r"\1\nanchors: " + " ".join(args.anchor), b, count=1)
+                # re-fingerprint the (possibly narrowed) anchor set
+                am = re.search(r"(?m)^anchors:\s*(.*)$", b)
+                scope = [x for x in re.split(r"[,\s]+", am.group(1)) if x] if am else []
+                raw_fp, norm_fp = anchor_fingerprints({"anchors": scope})
+                if "anchor_hash:" in b:
+                    b = re.sub(r"(?m)^anchor_hash:.*$", "anchor_hash: " + raw_fp, b)
+                else:
+                    b = re.sub(r"(?m)^(verified_at:.*)$", r"\1\nanchor_hash: " + raw_fp, b, count=1)
+                if "anchor_norm:" in b:
+                    b = re.sub(r"(?m)^anchor_norm:.*$", "anchor_norm: " + norm_fp, b)
+                else:
+                    b = re.sub(r"(?m)^(anchor_hash:.*)$", r"\1\nanchor_norm: " + norm_fp, b, count=1)
+                if args.resolved_by:
+                    if "resolved_by:" in b:
+                        b = re.sub(r"(?m)^resolved_by:.*$", "resolved_by: " + args.resolved_by, b)
+                    else:
+                        b = re.sub(r"(?m)^(anchor_norm:.*)$",
+                                   r"\1\nresolved_by: " + args.resolved_by, b, count=1)
+                    # A settled dead end must not keep reading as a live warning. Agents read
+                    # the markdown directly, so the HEADING has to carry that fact: an honest
+                    # body is not enough. Observed in practice -- an agent added resolved_by and
+                    # a "condition no longer holds" body, and left the title asserting the dead
+                    # condition, which is the first thing the next agent reads.
+                    if not re.search(r"(?m)^##\s+.*\((settled|superseded)\)\s*$", b):
+                        b = re.sub(r"(?m)^##\s+(.+?)\s*$", r"## \1 (settled)", b, count=1)
+                done.append(re.search(r"(?m)^id:\s*(\S+)", b).group(1))
+            rebuilt.append(b)
+        p.write_text("".join(rebuilt))
+    for eid in done:
+        print("verified %s @ %s%s" % (eid, rev, ("  scope -> " + " ".join(args.anchor)) if args.anchor else ""))
+    if not done:
+        print("no live memory matched")
+        return 1
+    return cmd_index(args)
+
+
+def cmd_list(args):
+    rows = load_all()
+    if not rows:
+        print("no memories yet")
+        return 0
+    print("%-24s %-10s %-11s %-28s %s" % ("ID", "TYPE", "STATUS", "SCOPE", "TITLE"))
+    for e in rows:
+        print("%-24s %-10s %-11s %-28s %s" % (
+            e["id"], e["type"], e["status"],
+            (", ".join(e["anchors"]) or "-")[:28], e["title"]))
+    print("\n%d memories" % len(rows))
+    return 0
+
+
+# --------------------------------------------------------------------- wiring
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="rmem", description=__doc__.splitlines()[0],
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version", version="rmem " + VERSION)
+    sub = p.add_subparsers(dest="cmd")
+
+    s = sub.add_parser("init", help="create .memory/ and gitignore the index")
+    s.set_defaults(func=cmd_init)
+
+    s = sub.add_parser("add", help="record a typed memory (watch the diff)")
+    s.add_argument("--type", choices=["decision", "dead-end", "convention", "hazard"], required=True)
+    s.add_argument("--title", required=True)
+    s.add_argument("--body", default="")
+    s.add_argument("--anchor", action="append", default=[], help="file glob this memory is about (repeatable)")
+    s.add_argument("--evidence", default="", help="required for dead-end: the commit/PR/error that proved it")
+    s.add_argument("--supersedes", action="append", default=[], help="id of a memory this replaces")
+    s.add_argument("--resolved-by", default="",
+                   help="dead-end only: what settled it (commit/PR). Omit if it still holds.")
+    s.add_argument("--owner", default="",
+                   help="hazard only: the team/role accountable for the frozen area")
+    s.add_argument("--enforcement", default="",
+                   help="hazard only: the control that actually enforces it (e.g. CODEOWNERS)")
+    s.add_argument("--status", default="accepted")
+    s.add_argument("--author", default="")
+    s.add_argument("--review-by", default="")
+    s.set_defaults(func=cmd_add)
+
+    s = sub.add_parser("index", help="rebuild the derived SQLite index")
+    s.set_defaults(func=cmd_index)
+
+    s = sub.add_parser("check", help="MEMORY-HEALTH report (use in CI, exit 1 when broken)")
+    s.add_argument("--brief", action="store_true", help="one line, for session start")
+    s.add_argument("--github", action="store_true",
+                   help="emit GitHub Actions annotations + job summary (CI mode)")
+    s.add_argument("--since", default="",
+                   help="the ref this change starts from (CI passes the PR base sha)")
+    s.set_defaults(func=cmd_check)
+
+    s = sub.add_parser("recall", help="bounded context block for a task")
+    s.add_argument("task", nargs="+")
+    s.add_argument("--limit", type=int, default=6)
+    s.add_argument("--budget", type=int, default=1600)
+    s.add_argument("--all", action="store_true", help="include superseded memories")
+    s.set_defaults(func=cmd_recall)
+
+    s = sub.add_parser("compile", help="emit conventions into AGENTS.md")
+    s.set_defaults(func=cmd_compile)
+
+    s = sub.add_parser("supersede", help="retire a memory by pointing it at its replacement")
+    s.add_argument("old")
+    s.add_argument("new")
+    s.set_defaults(func=cmd_supersede)
+
+    s = sub.add_parser("verify", help="re-stamp memories against HEAD (clear stale flags)")
+    s.add_argument("ids", nargs="*")
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--anchor", action="append", default=[], help="also narrow/reset the scope")
+    s.add_argument("--resolved-by", default="",
+                   help="also record what settled this dead end")
+    s.set_defaults(func=cmd_verify)
+
+    s = sub.add_parser("list", help="list memories")
+    s.set_defaults(func=cmd_list)
+
+    args = p.parse_args(argv)
+    if not getattr(args, "func", None):
+        p.print_help()
+        return 0
+    if hasattr(args, "author") and not args.author:
+        args.author = _run(["git", "config", "user.name"]) or "unknown"
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

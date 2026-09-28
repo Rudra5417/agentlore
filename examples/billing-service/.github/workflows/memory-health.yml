@@ -1,0 +1,46 @@
+name: memory-health
+
+# The memory gate. Memory changes ride the code PR, so this runs on every PR and
+# blocks the merge the same way a failing test does -- but it reports with
+# annotations ON THE DIFF, at the line of the memory that is wrong.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    steps:
+      # Full history is NOT needed for drift detection -- that is content-based, so a
+      # squashed or shallow history still fails correctly. It is only here so the
+      # annotation can name the specific file that invalidated the memory.
+      - name: Checkout with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # .memory/index.db is gitignored: it is a derived build artifact, never
+      # reviewed, never merged. CI rebuilds it from the markdown every time.
+      - name: Rebuild the derived index
+        run: python3 tools/rmem index
+
+      - name: MEMORY-HEALTH
+        # Exits 1 on any broken check. Annotations land on the PR diff; the table
+        # lands in the job summary. This single step is the whole review gate.
+        run: python3 tools/rmem check --github
+
+      # Typed fragments are the source of truth; AGENTS.md is a build target.
+      # If they disagree, the committed AGENTS.md is lying to every agent.
+      - name: AGENTS.md matches .memory/conventions.md
+        run: |
+          python3 tools/rmem compile
+          git diff --exit-code AGENTS.md
