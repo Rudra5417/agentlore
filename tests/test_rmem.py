@@ -483,5 +483,139 @@ class TestSupersededAreHistory(Base):
         self.assertGreen()
 
 
+class TestRetractAndRm(Base):
+    """Two different situations that both used to require hand-editing the markdown:
+
+    `retract` -- this was never true. Keep the text so a reviewer sees what was removed.
+    `rm`      -- this must not be in the repo at all. Delete it, and say out loud that
+                 deleting a file is not unpublishing.
+    """
+
+    def three_decisions(self):
+        ids = []
+        for name in ("Alpha rule", "Bravo rule", "Charlie rule"):
+            ids.append(self.f.add("--type", "decision", "--title", name,
+                                  "--body", "body of " + name,
+                                  "--anchor", "src/billing/**", "--author", "test"))
+        self.f.commit("three decisions")
+        return ids
+
+    def headings(self, name=".memory/decisions.md"):
+        return re.findall(r"(?m)^## (.+)$", self.f.read(name))
+
+    # -------------------------------------------------------------- retract
+
+    def test_retract_keeps_the_text_and_labels_the_heading(self):
+        _, b, _ = self.three_decisions()
+        code, out = self.f.rmem("retract", b, "--reason", "the agent inferred this")
+        self.assertEqual(code, 0, out)
+
+        text = self.f.read(".memory/decisions.md")
+        self.assertIn("## Bravo rule (retracted)", text)
+        self.assertIn("status: retracted", text)
+        self.assertIn("retracted_reason: the agent inferred this", text)
+        # the body survives: that is the entire point of retracting rather than deleting
+        self.assertIn("body of Bravo rule", text)
+
+    def test_retract_without_a_reason_is_refused(self):
+        _, b, _ = self.three_decisions()
+        code, out = self.f.rmem("retract", b)
+        self.assertNotEqual(code, 0, "a silent disappearance must not be possible")
+        self.assertIn("reason", out.lower())
+
+    def test_retract_is_idempotent_and_replaces_the_reason(self):
+        _, b, _ = self.three_decisions()
+        self.f.rmem("retract", b, "--reason", "first")
+        self.f.rmem("retract", b, "--reason", "corrected")
+        text = self.f.read(".memory/decisions.md")
+        self.assertEqual(text.count("(retracted)"), 1, text)
+        self.assertIn("retracted_reason: corrected", text)
+        self.assertNotIn("retracted_reason: first", text)
+
+    def test_retracted_entries_are_excluded_from_live_checks(self):
+        """Prove it in both directions: while live the entry is an obligation, and once
+        retracted it is history -- even though its anchored code has gone."""
+        mem = self.f.add("--type", "decision", "--title", "Users API shape",
+                         "--body", "handlers are one-per-resource",
+                         "--anchor", "src/api/**", "--author", "test")
+        self.f.commit("api decision")
+        self.f.rmem("index")
+        self.assertGreen()
+
+        (self.f.dir / "src/api/handlers/users.py").unlink()
+        self.f.rmem("index")
+        self.assertFails("anchors-resolve")          # it really is a live obligation
+
+        self.f.rmem("retract", mem, "--reason", "wrong from the start")
+        self.f.rmem("index")
+        self.assertGreen()                           # and now it is not
+
+    # ------------------------------------------------------------------- rm
+
+    def test_rm_removes_only_the_target_and_never_the_file_header(self):
+        a, b, c = self.three_decisions()
+        code, out = self.f.rmem("rm", a)          # the FIRST entry: the header-eating case
+        self.assertEqual(code, 0, out)
+
+        text = self.f.read(".memory/decisions.md")
+        self.assertTrue(text.startswith("# Decisions"), text[:60])
+        self.assertIn("one entry per '## ' heading", text)
+        self.assertNotIn("Alpha rule", text)
+        self.assertIn("Bravo rule", text)
+        self.assertIn("Charlie rule", text)
+        self.assertNotIn(a, text)
+        self.assertEqual(len(self.headings()), 2)
+
+    def test_rm_leaves_a_parseable_file(self):
+        a, _, _ = self.three_decisions()
+        self.f.rmem("rm", a)
+        self.f.rmem("index")
+        self.assertGreen()                       # index rebuilt and consistent
+        code, out = self.f.rmem("list")
+        self.assertEqual(code, 0)
+        self.assertNotIn("Alpha rule", out)
+        self.assertIn("Bravo rule", out)
+
+    def test_rm_reports_that_history_is_untouched(self):
+        a, _, _ = self.three_decisions()
+        code, out = self.f.rmem("rm", a)
+        self.assertEqual(code, 0)
+        low = out.lower()
+        self.assertTrue("git log" in low or "clone" in low,
+                        "rm must not imply the text is gone from history:\n" + out)
+        self.assertIn("retract", low, "should point at the safer verb")
+
+    def test_rm_of_an_unknown_id_fails_loudly(self):
+        self.three_decisions()
+        code, out = self.f.rmem("rm", "DEC-1970-01-01-nope")
+        self.assertEqual(code, 1)
+        self.assertIn("no memory with id", out)
+
+
+class TestCliRobustness(Base):
+    def test_version_is_reported(self):
+        code, out = self.f.rmem("--version")
+        self.assertEqual(code, 0)
+        self.assertIn("rmem", out)
+
+    def test_readme_version_matches_the_tool(self):
+        """Docs drift silently. The README states a version; the tool must agree."""
+        readme = (TOOL.parent / "README.md").read_text()
+        m = re.search(r"Prototype v(\d+\.\d+\.\d+)", readme)
+        self.assertIsNotNone(m, "README should state a version")
+        assert m is not None
+        version = m.group(1)
+        code, out = self.f.rmem("--version")
+        self.assertIn(version, out,
+                      "README says v%s but the tool reports %r" % (version, out.strip()))
+
+    def test_piping_into_head_does_not_traceback(self):
+        """`rmem list | head` is normal usage and must not dump a stack trace."""
+        r = subprocess.run("python3 %s list | head -1" % TOOL, shell=True,
+                           cwd=self.f.dir, capture_output=True, text=True)
+        self.assertNotIn("Traceback", r.stderr, r.stderr)
+        self.assertNotIn("BrokenPipeError", r.stderr, r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

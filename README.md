@@ -1,7 +1,7 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.3.1. One file, stdlib only, no dependencies, and a test suite that runs in
-ten seconds.
+Prototype v0.3.2. One file, stdlib only, no dependencies, and a test suite that runs in
+fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
 facts worth keeping — decisions, dead ends, house rules — live in people's heads.
@@ -36,8 +36,10 @@ rmem add --type hazard --title T --body B --anchor "src/billing/**" \
 rmem check [--brief|--github] [--since REF]  # MEMORY-HEALTH; exit 1 when broken
 rmem recall "add a new payment provider"   # bounded context block for a task
 rmem compile                               # emit conventions + hazards into AGENTS.md
-rmem supersede <old-id> <new-id>           # retire a memory that is no longer true
 rmem verify <id> [--anchor glob] [--resolved-by S]  # "still true" — re-stamp / narrow
+rmem supersede <old-id> <new-id>           # was true, now replaced
+rmem retract <id> --reason "..."           # was NEVER true — keeps the text, labels it
+rmem rm <id>                               # must not exist at all — deletes the block
 rmem list
 ```
 
@@ -144,18 +146,40 @@ against the task.
   instructs an agent about security boundaries is the poisoning surface described below, and
   those decisions belong to the platform.
 
-## The four ways a stale or settled memory gets resolved
+## Retiring a memory: retract, not delete
 
-Without these, the gate is just nagging and teams disable it.
+Once a memory is wrong, there are three different situations and they need different verbs.
+Collapsing them into "delete" loses the evidence a reviewer needs.
 
-* **verify** — the memory is still true; re-stamp it against HEAD.
-* **verify --anchor** — the memory is true but was scoped too broadly; narrow it.
-  (An anchor like `src/**` goes stale on every change; that is a scope bug, not a fact bug.)
-* **supersede** — the memory is now false; retire it and point at its replacement.
-  The old entry stays in history marked `(superseded)`, so reviewers see *why* it changed.
-* **verify --resolved-by** — a dead end that has been settled. Keeps the history, records what
-  settled it, and marks the heading `(settled)` so the next agent does not read the title as a
-  live warning.
+* **verify** — it is still true. Re-stamp it against HEAD.
+* **verify --anchor** — true, but scoped too broadly. Narrow it. (An anchor like `src/**` goes
+  stale on every change; that is a scope bug, not a fact bug.)
+* **supersede OLD NEW** — it was true and has been replaced. The old entry stays marked
+  `(superseded)` with a pointer, so reviewers see *why* it changed.
+* **verify --resolved-by** — a dead end that has been settled. Marks the heading `(settled)` so
+  the next agent does not read the title as a live warning.
+* **retract ID --reason** — it was **never** true. An agent inferred something plausible and
+  wrong, or someone recorded a rule that was always mistaken. The text stays on disk, labelled
+  `(retracted)` with the reason, and is excluded from live checks. `--reason` is required:
+  a memory that disappears with no explanation is worse than one that was wrong, because the
+  next agent cannot tell whether it was retracted or simply lost.
+
+### `rm` — for one case only
+
+`rmem rm <id>` deletes the entry block. It exists for text that must not be in the repository
+at all: a pasted customer name, a token, an internal URL. Everywhere else `retract` is the right
+verb, because deleting a memory removes the evidence along with the mistake.
+
+It prints the limit every time:
+
+```
+! this rewrites the file, not history: the text is still in every existing clone and in `git log -p`.
+  if it was sensitive, removing it here does not unpublish it.
+```
+
+That warning is the whole reason the command is safe to offer. `rm` rewrites a file; it does not
+rewrite history, and in a shared repo the text is already in every clone. The deletion is itself
+a reviewable diff, which is the real safeguard.
 
 ## Evidence: what testing actually showed
 
@@ -194,7 +218,7 @@ repo under test: experiment copies, the tool's README and its docs directory all
 * **mem0 / claude-mem / OpenMemory** — auto-capture into an opaque store. Not reviewable,
   not shared ground truth, not versioned with the code.
 * **ADRs** — reviewable and versioned, but too much ceremony per decision and no agent
-  write path.
+  write path. Nothing in an ADR tells you it has stopped being true.
 * **fiberplane/drift** (the most-adopted tool here, ~146★) — AST-symbol anchoring, which is
   better at decay than a content hash. But it watches *docs*, has no typed decisions or
   supersession, and no accuracy check. `rmem` keeps a fail-closed variant: the stripped
@@ -233,7 +257,7 @@ read `9/10` — the tool has since grown checks 10, 11 and 12 and now reads `12/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 32 tests, ~10s, stdlib only
+python3 run_tests.py          # 42 tests, ~15s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
@@ -257,18 +281,25 @@ It pins the invariants that caught real bugs:
   unrelated work
 - **hazards** — no owner, no enforcement, a missing CODEOWNERS rule, and a catch-all that only
   *looks* like coverage all fail; creating the rule is the fix
+- **retract** — keeps the body, labels the heading, requires a reason, is idempotent, and is
+  excluded from live checks *in both directions* (an obligation while live, history after)
+- **rm** — removes only the target block, never the file header even for the first entry,
+  leaves a parseable file, and says out loud that history is untouched
 - **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
   areas section naming the control
+- **CLI robustness** — `rmem list | head` does not dump a stack trace
 
 CI runs the suite on Python 3.9 and 3.12, then runs the shipped example through its own memory
 gate and asserts the vendored copy still matches the tool at the root.
 
 ## Known gaps in this prototype
 
-* **No `rmem rm`** — removing an entry means editing the markdown by hand.
 * **No contradiction detection.** Two live memories that disagree are not caught. `gitmem`
   has a conflict queue; `lore` flags them in an audit. This is the hardest remaining piece
   and is deliberately not faked with keyword heuristics.
+* **No `rmem move`/re-anchor workflow.** Changing which files a memory covers means
+  `verify --anchor`, which also re-stamps it; there is no way to re-scope without asserting
+  it is still true.
 * **CODEOWNERS matching is best-effort**, not GitHub's matcher. It errs toward finding a rule,
   because a false "covered" is a softer failure than failing a repo that is in fact protected.
 * **Retrieval is term-overlap scoring, not semantic.** Agents read `.memory/*.md` directly in
@@ -276,6 +307,8 @@ gate and asserts the vendored copy still matches the tool at the root.
 * **No monorepo scoping.** `lore` detects eight build systems and scopes memory per package;
   `rmem` has flat anchors.
 * **No compression.** `lore` digests at 500 entries. `rmem` has no answer for growth.
+* **No history sweep for `rm`.** The tool warns that history is untouched but cannot tell you
+  whether a given string ever appeared in a memory. `git log -S` does that, unassisted.
 * **The Action expects `rmem` vendored at `tools/rmem`.** A published action is the real fix.
 * **AST-aware anchors remain the right upgrade** for the raw hash; the stripped view only
   softens the most common false positive (reformatting), it does not eliminate it.
@@ -291,6 +324,7 @@ gate and asserts the vendored copy still matches the tool at the root.
   or malicious entry is read by every agent in every session: it is a persistent prompt
   injection, not a typo. Never let a memory instruct anything about auth, secrets, CI config
   or permissions. Git history is forever, so treat every memory as published — no customer
-  names, no incident detail, no internal-only hostnames.
+  names, no incident detail, no internal-only hostnames. That is also why `retract` is the
+  default way to remove a bad memory and `rm` is the exception.
 * **The winner is a platform team, not a purchase.** Realistic adoption is vendoring this into
   a repo template with a required status check and an org-level baseline, not selling seats.

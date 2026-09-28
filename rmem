@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rmem - git-reviewable repo memory for coding agents. Prototype v0.1.0.
+"""rmem - git-reviewable repo memory for coding agents.
 
 Typed memories live as markdown in .memory/ and are versioned with the code, so
 every write shows up as a reviewable diff in the PR that motivated it.
@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import hashlib
+import os
 import re
 import sqlite3
 import subprocess
@@ -22,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.3.2"
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
@@ -31,6 +32,11 @@ FILES = {"decision": "decisions.md", "dead-end": "dead-ends.md",
 PREFIX = {"decision": "DEC", "dead-end": "DEAD", "convention": "CONV", "hazard": "HAZ"}
 HEADING = {"decision": "Decisions", "dead-end": "Dead ends",
            "convention": "Conventions", "hazard": "Hazards"}
+# Statuses that mean "history, not an obligation": excluded from live checks. A retracted
+# memory was never true; a superseded one was true and has been replaced. Both stay on disk
+# so a reviewer can see what was removed and why.
+DEAD_STATUSES = ("superseded", "deprecated", "retracted")
+
 FENCE = re.compile(r"<!--\s*rmem\s*(.*?)-->", re.S)
 GREEN, RED, DIM, BOLD, OFF = "\033[32m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 
@@ -650,7 +656,7 @@ def cmd_check(args):
     add("supersedes-resolve", not dangling, "; ".join(dangling[:3]))
 
     # retired memories are history, not obligations: only live entries are checked
-    live = [e for e in entries if e["status"] not in ("superseded", "deprecated")]
+    live = [e for e in entries if e["status"] not in DEAD_STATUSES]
 
     # 6 anchors resolve to real files
     bad_anchor = []
@@ -826,7 +832,7 @@ def cmd_recall(args):
     rows = load_all()
     scored = []
     for e in rows:
-        if e["status"] in ("superseded", "deprecated") and not args.all:
+        if e["status"] in DEAD_STATUSES and not args.all:
             continue
         blob_title = (e["title"] + " " + " ".join(e["anchors"])).lower()
         blob_body = e["body"].lower()
@@ -936,6 +942,95 @@ def cmd_supersede(args):
     return cmd_index(args)
 
 
+# --------------------------------------------------------------- retract / rm
+
+def cmd_retract(args):
+    """Mark a memory as never having been true.
+
+    Deliberately NOT a delete. The common case is not "this was true and has changed" --
+    it is "this should never have been recorded at all" (an agent inferred something
+    plausible and wrong). Deleting it destroys the evidence a reviewer needs, so the text
+    stays and the entry is labelled, exactly like a supersession.
+    """
+    if not (args.reason or "").strip():
+        print("--reason is required.")
+        print("  %sA memory that disappears with no explanation is worse than one that was"
+              " wrong:%s" % (DIM, OFF))
+        print("  %sthe next agent cannot tell whether it was retracted or lost.%s" % (DIM, OFF))
+        return 1
+    for name in SOURCES:
+        p = MEM / name
+        if not p.exists():
+            continue
+        blocks = re.split(r"(?m)(?=^##\s+)", p.read_text())
+        rebuilt, hit = [], False
+        for i, b in enumerate(blocks):
+            # index 0 is the file header, never an entry
+            if i > 0 and b.startswith("## ") and ("id: " + args.id) in b:
+                hit = True
+                if "status:" in b:
+                    b = re.sub(r"(?m)^status:.*$", "status: retracted", b)
+                else:
+                    b = re.sub(r"(?m)^(type:.*)$", r"\1\nstatus: retracted", b, count=1)
+                if "retracted_reason:" in b:
+                    b = re.sub(r"(?m)^retracted_reason:.*$",
+                               "retracted_reason: " + args.reason, b)
+                else:
+                    b = re.sub(r"(?m)^(status:.*)$",
+                               r"\1\nretracted_reason: " + args.reason, b, count=1)
+                if not re.search(r"(?m)^##\s+.*\((retracted|superseded)\)\s*$", b):
+                    b = re.sub(r"(?m)^##\s+(.+?)\s*$", r"## \1 (retracted)", b, count=1)
+            rebuilt.append(b)
+        if hit:
+            p.write_text("".join(rebuilt))
+            print("retracted %s in %s" % (args.id, name))
+            print("  %skept on disk as '(retracted)' with the reason, and excluded from live"
+                  " checks.%s" % (DIM, OFF))
+            return cmd_index(args)
+    print("no memory with id %s" % args.id)
+    return 1
+
+
+def cmd_rm(args):
+    """Delete a memory block outright.
+
+    For one case only: text that must not be in the repository at all (a pasted customer
+    name, a token, an internal URL). Everywhere else `retract` is the right verb, because
+    deleting a memory removes the evidence along with the mistake.
+
+    The honest limit is printed every time: this rewrites the file, not history. In a
+    shared repo the text is already in every clone, and `git log -p` still has it.
+    """
+    for name in SOURCES:
+        p = MEM / name
+        if not p.exists():
+            continue
+        blocks = re.split(r"(?m)(?=^##\s+)", p.read_text())
+        keep, hit = [], False
+        for i, b in enumerate(blocks):
+            # only ever drop a real entry block; the file header is not a memory
+            if i > 0 and b.startswith("## ") and ("id: " + args.id) in b:
+                hit = True
+                continue
+            keep.append(b)
+        if hit:
+            text = "".join(keep)
+            text = re.sub(r"\n{3,}\Z", "\n", text)      # tidy only the tail
+            if not text.endswith("\n"):
+                text += "\n"
+            p.write_text(text)
+            print("removed %s from %s" % (args.id, name))
+            print("  %s! this rewrites the file, not history: the text is still in every"
+                  " existing clone and in `git log -p`.%s" % (RED, OFF))
+            print("  %s  if it was sensitive, removing it here does not unpublish it.%s"
+                  % (RED, OFF))
+            print("  %s-> for 'this was never true', prefer: rmem retract <id> --reason ...%s"
+                  % (DIM, OFF))
+            return cmd_index(args)
+    print("no memory with id %s" % args.id)
+    return 1
+
+
 # --------------------------------------------------------------------- list
 
 def cmd_verify(args):
@@ -949,7 +1044,7 @@ def cmd_verify(args):
         print("not a git repo / no commits -- cannot stamp a revision")
         return 1
     entries = load_all()
-    ids = ([e["id"] for e in entries if e["status"] not in ("superseded", "deprecated")]
+    ids = ([e["id"] for e in entries if e["status"] not in DEAD_STATUSES]
            if args.all else list(args.ids))
     if not ids:
         print("nothing to verify (pass ids, or --all)")
@@ -1078,6 +1173,20 @@ def main(argv=None):
     s.add_argument("new")
     s.set_defaults(func=cmd_supersede)
 
+    s = sub.add_parser("retract",
+                       help="mark a memory as never having been true (keeps the text)")
+    s.add_argument("id")
+    s.add_argument("--reason", required=True,
+                   help="why this was wrong. Required: a silent disappearance is worse "
+                        "than a wrong memory.")
+    s.set_defaults(func=cmd_retract)
+
+    s = sub.add_parser("rm",
+                       help="delete a memory block outright (text that must not be in the "
+                            "repo at all)")
+    s.add_argument("id")
+    s.set_defaults(func=cmd_rm)
+
     s = sub.add_parser("verify", help="re-stamp memories against HEAD (clear stale flags)")
     s.add_argument("ids", nargs="*")
     s.add_argument("--all", action="store_true")
@@ -1095,7 +1204,13 @@ def main(argv=None):
         return 0
     if hasattr(args, "author") and not args.author:
         args.author = _run(["git", "config", "user.name"]) or "unknown"
-    return args.func(args)
+    try:
+        return args.func(args)
+    except BrokenPipeError:
+        # `rmem list | head` is a normal thing to do; a traceback is not. Redirect the
+        # dead stdout to devnull so Python does not also complain while shutting down.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        return 0
 
 
 if __name__ == "__main__":
