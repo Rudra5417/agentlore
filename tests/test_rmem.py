@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+"""Test suite for rmem.
+
+Stdlib only, matching the tool itself -- no pytest, no fixtures library.
+
+Run from the repo root:
+
+    python3 run_tests.py
+    python3 -m unittest discover -s tests -v
+
+Each test builds a throwaway git repo in a temp directory. Every assertion is made
+against real process output and real exit codes, because most of the bugs this suite
+exists to prevent were invisible from the inside: a check that passed when it should
+have failed, or a heading that kept asserting a condition its own commit had removed.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+TOOL = Path(__file__).resolve().parent.parent / "rmem"
+
+BASE_FILES = {
+    "src/billing/charge.py": "def charge():\n    return 1\n",
+    "src/billing/gateway.py": "def gateway():\n    return 2\n",
+    "src/api/handlers/users.py": "def users():\n    return []\n",
+    ".github/CODEOWNERS": "*            @default-owner\n/src/billing/**  @payments-team\n",
+}
+
+
+class Fixture:
+    """A throwaway git repo with rmem running against it."""
+
+    def __init__(self, files=None):
+        self.dir = Path(tempfile.mkdtemp(prefix="rmem-test-"))
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "test@example.invalid")
+        self.git("config", "user.name", "Test")
+        for name, content in (files or BASE_FILES).items():
+            self.write(name, content)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "init", "--allow-empty")
+
+    # ---------------------------------------------------------------- plumbing
+
+    def git(self, *args):
+        return subprocess.run(["git", *args], cwd=self.dir,
+                              capture_output=True, text=True)
+
+    def write(self, name, content):
+        p = self.dir / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+        return p
+
+    def read(self, name):
+        return (self.dir / name).read_text()
+
+    def commit(self, message="change"):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", message)
+
+    def rmem(self, *args):
+        r = subprocess.run([sys.executable, str(TOOL), *args], cwd=self.dir,
+                           capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    # ------------------------------------------------------------------- verbs
+
+    def init(self):
+        code, out = self.rmem("init")
+        assert code == 0, "rmem init failed:\n" + out
+        return out
+
+    def add(self, *args):
+        """Returns the new memory id (asserting the write succeeded)."""
+        code, out = self.rmem("add", *args)
+        m = re.search(r"added (\S+) \(", out)
+        assert code == 0 and m, "rmem add failed:\n" + out
+        return m.group(1)
+
+    def health(self):
+        """Parse `check --brief` into a dict. Never raises on BROKEN."""
+        code, out = self.rmem("check", "--brief")
+        first = out.strip().splitlines()[0]
+        m = re.match(r"MEMORY-HEALTH: (\d+)/(\d+) (GREEN|BROKEN)(?: -- (.*))?$", first)
+        assert m, "unparseable health line: %r" % first
+        return {
+            "code": code,
+            "passed": int(m.group(1)),
+            "total": int(m.group(2)),
+            "green": m.group(3) == "GREEN",
+            "failed": [s.strip() for s in (m.group(4) or "").split(",") if s.strip()],
+            "brief": first,
+            "out": out,
+        }
+
+    def check_full(self):
+        return self.rmem("check")
+
+    def cleanup(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+class Base(unittest.TestCase):
+    files = BASE_FILES
+    seed_convention = True
+
+    def setUp(self):
+        self.f = Fixture(self.files)
+        self.f.init()
+        self.conv = None
+        if self.seed_convention:
+            self.conv = self.f.add(
+                "--type", "convention", "--title", "Billing goes through the gateway",
+                "--body", "Never import the provider outside gateway.py.",
+                "--anchor", "src/billing/**", "--author", "test")
+        self.f.commit("seed memory")
+
+    def tearDown(self):
+        self.f.cleanup()
+
+    def assertGreen(self, h=None):
+        h = h or self.f.health()
+        self.assertTrue(h["green"], "expected GREEN, got %s\n%s" % (h["brief"], h["out"]))
+        self.assertEqual(h["code"], 0)
+
+    def assertFails(self, check, h=None):
+        h = h or self.f.health()
+        self.assertIn(check, h["failed"],
+                      "expected %s to fail; failing were %s" % (check, h["failed"]))
+        self.assertEqual(h["code"], 1, "a broken gate must exit 1")
+
+
+# --------------------------------------------------------------- the happy path
+
+class TestBaseline(Base):
+    def test_fresh_repo_is_green(self):
+        h = self.f.health()
+        self.assertEqual(h["total"], 12)
+        self.assertGreen(h)
+
+    def test_unstamped_repo_fails_index_checks(self):
+        f = Fixture(BASE_FILES)
+        try:
+            code, out = f.rmem("check", "--brief")
+            self.assertEqual(code, 1)
+            self.assertIn("no .memory/", out)
+        finally:
+            f.cleanup()
+
+
+# ------------------------------------------------------- fail-closed behaviour
+
+class TestFailClosed(Base):
+    """A memory system that can fail open is worse than none."""
+
+    def test_missing_fingerprint_is_an_error_not_a_pass(self):
+        text = self.f.read(".memory/conventions.md")
+        text = re.sub(r"(?m)^anchor_hash:.*\n", "", text)
+        self.f.write(".memory/conventions.md", text)
+        self.f.rmem("index")
+        self.assertFails("anchors-stamped")
+
+    def test_index_stale_when_markdown_edited_without_rebuild(self):
+        self.f.write(".memory/conventions.md",
+                     self.f.read(".memory/conventions.md") + "\n<!-- edited -->\n")
+        self.assertFails("index-fresh")
+
+    def test_state_is_decided_by_content_not_commit_sha(self):
+        """Squash-merge and rebase rewrite history. Drift must survive that.
+
+        Point verified_at at a commit that does not exist, then change the anchored
+        code: a history-based check would go quiet here. Content-based must still fail.
+        """
+        text = self.f.read(".memory/conventions.md")
+        text = re.sub(r"(?m)^verified_at:.*$", "verified_at: 0000000", text)
+        self.f.write(".memory/conventions.md", text)
+        self.f.rmem("index")
+        self.assertGreen()
+
+        self.f.write("src/billing/charge.py", "def charge():\n    return 99\n")
+        self.f.rmem("index")
+        self.assertFails("anchors-not-stale")
+
+
+# ------------------------------------------------------------ anchors resolve
+
+class TestAnchorsResolve(Base):
+    def test_anchor_to_vanished_code_fails(self):
+        self.f.add("--type", "decision", "--title", "Users API shape",
+                   "--anchor", "src/api/**", "--author", "test")
+        (self.f.dir / "src/api/handlers/users.py").unlink()
+        self.f.rmem("index")
+        self.assertFails("anchors-resolve")
+
+    def test_empty_leftover_directory_does_not_satisfy_an_anchor(self):
+        """The false negative: a deleted file leaves its directory behind, and an
+        earlier version happily reported 'the code still exists' about nothing."""
+        self.f.add("--type", "decision", "--title", "Users API shape",
+                   "--anchor", "src/api/**", "--author", "test")
+        (self.f.dir / "src/api/handlers/users.py").unlink()
+        self.assertTrue((self.f.dir / "src/api/handlers").is_dir(), "fixture assumption")
+        self.f.rmem("index")
+        self.assertFails("anchors-resolve")
+
+    def test_live_anchors_are_not_flagged(self):
+        """The over-correction: a naive '**' expansion flagged live anchors as dead."""
+        self.assertGreen()
+
+    def test_broad_scope_can_be_narrowed(self):
+        wide = self.f.add("--type", "convention", "--title", "Anything anywhere",
+                          "--anchor", "**", "--author", "test")
+        self.f.commit("wide")
+        # a change anywhere now marks the broad memory stale
+        self.f.write("src/api/handlers/users.py", "def users():\n    return [1]\n")
+        self.f.rmem("index")
+        self.assertFails("anchors-not-stale")
+
+        code, out = self.f.rmem("verify", wide, "--anchor", "src/api/**")
+        self.assertEqual(code, 0, out)
+        self.f.rmem("index")
+        self.assertNotIn("anchors-not-stale", self.f.health()["failed"])
+
+
+# ------------------------------------------------------- formatting vs real change
+
+class TestNormalization(Base):
+    """The stripped view may only ever downgrade a detection. It must never excuse one."""
+
+    def test_reformatting_is_a_notice_not_a_failure(self):
+        self.f.write("src/billing/charge.py",
+                     "# a reformatting pass\n\n\ndef charge():\n    return 1\n")
+        h = self.f.health()
+        self.assertGreen(h)
+
+        code, out = self.f.check_full()
+        self.assertEqual(code, 0, out)
+        self.assertIn("reformatted", out.lower())
+
+    def test_a_real_change_to_the_same_file_still_fails(self):
+        self.f.write("src/billing/charge.py",
+                     "def charge():\n    return 1\n\n\ndef new_thing():\n    return 42\n")
+        self.assertFails("anchors-not-stale")
+
+
+# ------------------------------------------------------------- supersession
+
+class TestSupersede(Base):
+    def test_supersede_marks_the_entry_not_the_file_header(self):
+        """The original bug: supersede patched the file header, so the old memory was
+        never retired and health could never go green again."""
+        old = self.f.add("--type", "decision", "--title", "Billing goes through the gateway",
+                         "--anchor", "src/billing/**", "--author", "test")
+        new = self.f.add("--type", "decision", "--title", "Billing goes through the ledger",
+                         "--anchor", "src/billing/**", "--author", "test")
+        self.f.commit("two decisions")
+
+        code, out = self.f.rmem("supersede", old, new)
+        self.assertEqual(code, 0, out)
+        self.f.rmem("index")
+
+        text = self.f.read(".memory/decisions.md")
+        self.assertIn("(superseded)", text)
+        self.assertIn("## Billing goes through the gateway (superseded)", text)
+        # the file header is not a memory and must not be rewritten
+        self.assertTrue(text.startswith("# Decisions"), text[:40])
+        self.assertNotIn("# Decisions (superseded)", text)
+        self.assertGreen()
+
+    def test_supersession_pointing_at_a_missing_id_fails(self):
+        self.f.add("--type", "decision", "--title", "Replaced thing",
+                   "--anchor", "src/billing/**", "--author", "test",
+                   "--supersedes", "DEC-1970-01-01-dead")
+        self.assertFails("supersedes-resolve")
+
+
+# ------------------------------------------------------------- dead ends
+
+class TestDeadEnds(Base):
+    def test_dead_end_without_evidence_fails(self):
+        self.f.add("--type", "dead-end", "--title", "Redis queue did not work",
+                   "--body", "It dropped messages under load.",
+                   "--anchor", "src/billing/**", "--author", "test")
+        self.assertFails("dead-ends-evidenced")
+
+    def test_dead_end_riding_the_change_that_settled_it_fails(self):
+        """The accuracy gate. This is the observed failure: an agent fixes a problem
+        and records the problem as though it were still live."""
+        self.f.write("src/billing/charge.py", "def charge():\n    return 77\n")
+        self.f.add("--type", "dead-end",
+                   "--title", "The refund window rejects credit notes too",
+                   "--body", "credit_note ran the same window check as refund.",
+                   "--anchor", "src/billing/**",
+                   "--evidence", "ProviderError(409, 'beyond the 90 day refund window')",
+                   "--author", "test")
+        self.assertFails("dead-ends-settled")
+
+    def test_resolved_by_clears_it(self):
+        self.f.write("src/billing/charge.py", "def charge():\n    return 77\n")
+        mem = self.f.add("--type", "dead-end",
+                         "--title", "The refund window rejects credit notes too",
+                         "--body", "credit_note ran the same window check as refund.",
+                         "--anchor", "src/billing/**",
+                         "--evidence", "ProviderError(409, 'beyond the refund window')",
+                         "--resolved-by", "this change un-windowed credit_note",
+                         "--author", "test")
+        self.f.rmem("index")
+        self.assertNotIn("dead-ends-settled", self.f.health()["failed"])
+
+        # and the heading itself carries the fact, because agents read the markdown
+        self.assertIn("## The refund window rejects credit notes too (settled)",
+                      self.f.read(".memory/dead-ends.md"))
+
+    def test_settled_marker_is_idempotent(self):
+        self.f.write("src/billing/charge.py", "def charge():\n    return 77\n")
+        mem = self.f.add("--type", "dead-end", "--title", "Same wall twice",
+                         "--anchor", "src/billing/**", "--evidence", "boom",
+                         "--author", "test")
+        self.f.rmem("index")
+        self.f.rmem("verify", mem, "--resolved-by", "first")
+        self.f.rmem("verify", mem, "--resolved-by", "second")
+        text = self.f.read(".memory/dead-ends.md")
+        self.assertEqual(text.count("(settled)"), 1, text)
+        self.assertNotIn("(settled) (settled)", text)
+
+    def test_silent_when_the_memory_is_not_part_of_this_change(self):
+        """A long-lived dead end must not be dragged into unrelated work."""
+        self.f.write("src/billing/charge.py", "def charge():\n    return 77\n")
+        self.f.add("--type", "dead-end", "--title", "Redis queue did not work",
+                   "--anchor", "src/billing/**", "--evidence", "dropped under load",
+                   "--author", "test")
+        self.f.commit("recorded the dead end")
+        self.f.rmem("index")
+
+        self.f.write("src/billing/charge.py", "def charge():\n    return 78\n")
+        self.f.rmem("index")
+        h = self.f.health()
+        self.assertFails("anchors-not-stale", h)
+        self.assertNotIn("dead-ends-settled", h["failed"])
+
+
+# ------------------------------------------------------------------- hazards
+
+class TestHazards(Base):
+    """A hazard is a pointer to a control, never the control."""
+
+    def test_hazard_without_enforcement_is_a_wish(self):
+        self.f.add("--type", "hazard", "--title", "Do not touch billing",
+                   "--body", "Frozen.", "--anchor", "src/billing/**",
+                   "--owner", "@payments-team", "--author", "test")
+        self.assertFails("hazards-enforced")
+
+    def test_hazard_without_owner_fails(self):
+        self.f.add("--type", "hazard", "--title", "Do not touch billing",
+                   "--body", "Frozen.", "--anchor", "src/billing/**",
+                   "--enforcement", "branch protection", "--author", "test")
+        self.assertFails("hazards-enforced")
+
+    def test_hazard_naming_a_control_we_cannot_verify_passes(self):
+        """Honest limit: branch protection is real but unreadable from the repo. We do
+        not pretend to verify what we cannot see."""
+        self.f.add("--type", "hazard", "--title", "Release tags are protected",
+                   "--body", "Only the release bot may tag.",
+                   "--anchor", "src/billing/**", "--owner", "@release",
+                   "--enforcement", "branch protection on main", "--author", "test")
+        self.assertGreen()
+
+    def test_codeowners_claim_is_verified_against_the_file(self):
+        self.f.add("--type", "hazard", "--title", "Auth internals are frozen",
+                   "--body", "Security review required.", "--anchor", "src/api/**",
+                   "--owner", "@security-team",
+                   "--enforcement", "CODEOWNERS", "--author", "test")
+        self.assertFails("hazards-enforced")
+        # --brief names the failing check but not the reason; the reason is the point
+        code, out = self.f.check_full()
+        self.assertEqual(code, 1)
+        self.assertIn("CODEOWNERS", out)
+
+    def test_a_catch_all_rule_is_not_proof_of_ownership(self):
+        """`* @someone` nominally covers every path. Path coverage alone therefore
+        proves nothing -- the claimed owner must be the one actually assigned."""
+        self.f.add("--type", "hazard", "--title", "Auth internals are frozen",
+                   "--body", "Security review required.", "--anchor", "src/api/**",
+                   "--owner", "@security-team",
+                   "--enforcement", "CODEOWNERS", "--author", "test")
+        code, out = self.f.check_full()
+        self.assertEqual(code, 1)
+        self.assertIn("@default-owner", out, "should name the actual assigned owner")
+
+    def test_the_fix_is_to_create_the_control(self):
+        self.f.add("--type", "hazard", "--title", "Auth internals are frozen",
+                   "--body", "Security review required.", "--anchor", "src/api/**",
+                   "--owner", "@security-team", "--enforcement", "CODEOWNERS",
+                   "--author", "test")
+        self.assertFails("hazards-enforced")
+
+        self.f.write(".github/CODEOWNERS",
+                     self.f.read(".github/CODEOWNERS") + "/src/api/**  @security-team\n")
+        self.f.rmem("index")
+        self.assertGreen()
+
+    def test_hazard_passes_when_owner_and_rule_agree(self):
+        self.f.add("--type", "hazard", "--title", "Billing ledger is frozen",
+                   "--body", "Audit pending.", "--anchor", "src/billing/**",
+                   "--owner", "@payments-team", "--enforcement", "CODEOWNERS",
+                   "--author", "test")
+        self.assertGreen()
+
+
+# ------------------------------------------------------------------- compile
+
+class TestCompile(Base):
+    def test_compile_is_idempotent(self):
+        code, out = self.f.rmem("compile")
+        self.assertEqual(code, 0, out)
+        first = self.f.read("AGENTS.md")
+        self.f.rmem("compile")
+        self.assertEqual(first, self.f.read("AGENTS.md"))
+
+    def test_conventions_land_in_agents_md(self):
+        self.f.rmem("compile")
+        text = self.f.read("AGENTS.md")
+        self.assertIn("## House rules", text)
+        self.assertIn("Billing goes through the gateway", text)
+        self.assertIn("<!-- rmem:begin", text)
+        self.assertIn("<!-- rmem:end -->", text)
+
+    def test_hazards_compile_as_frozen_areas_naming_the_control(self):
+        self.f.add("--type", "hazard", "--title", "Billing ledger is frozen",
+                   "--body", "Audit pending.", "--anchor", "src/billing/**",
+                   "--owner", "@payments-team", "--enforcement", "CODEOWNERS",
+                   "--author", "test")
+        self.f.rmem("compile")
+        text = self.f.read("AGENTS.md")
+        self.assertIn("### Frozen areas", text)
+        self.assertIn("@payments-team", text)
+        self.assertIn("enforced by: CODEOWNERS", text)
+
+    def test_compile_preserves_surrounding_agents_md_content(self):
+        self.f.write("AGENTS.md", "# AGENTS.md\n\n## Dev environment\n\n- Run: `python3 run_tests.py`\n")
+        self.f.rmem("compile")
+        text = self.f.read("AGENTS.md")
+        self.assertIn("## Dev environment", text)
+        self.assertIn("## House rules", text)
+
+
+# ---------------------------------------------------------------- other checks
+
+class TestOtherChecks(Base):
+    def test_expired_review_by_fails(self):
+        self.f.add("--type", "convention", "--title", "Old rule",
+                   "--anchor", "src/billing/**", "--review-by", "2020-01-01",
+                   "--author", "test")
+        self.assertFails("reviews-current")
+
+    def test_duplicate_ids_fail(self):
+        text = self.f.read(".memory/conventions.md")
+        entry = text[text.index("## "):]        # the whole entry, heading and fence
+        self.f.write(".memory/conventions.md", text + "\n" + entry)
+        self.f.rmem("index")
+        self.assertFails("ids-unique")
+
+
+class TestSupersededAreHistory(Base):
+    def test_superseded_entries_are_excluded_from_live_checks(self):
+        """Otherwise the health score can never go green again."""
+        old = self.f.add("--type", "decision", "--title", "Old billing rule",
+                         "--anchor", "src/nonexistent/**", "--author", "test")
+        new = self.f.add("--type", "decision", "--title", "New billing rule",
+                         "--anchor", "src/billing/**", "--author", "test")
+        self.f.rmem("index")
+        self.assertFails("anchors-resolve")
+
+        self.f.rmem("supersede", old, new)
+        self.f.rmem("index")
+        self.assertGreen()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

@@ -179,6 +179,15 @@ def anchor_files(glob):
             g = g[:-len(suffix)]
             break
     try:
+        # A root-level glob ("**", "*", ".") means the whole repo. It has to be handled
+        # explicitly because pathlib.glob("**") yields DIRECTORIES only, so an anchor of
+        # "**" silently matched nothing. The skip set matters too: a fingerprint that
+        # included .git would churn on every commit, and one that included .memory would
+        # make every memory write invalidate every repo-wide memory.
+        if g in ("", ".", "*", "**"):
+            skip = {".git", ".memory"}
+            return sorted(x for x in Path(".").rglob("*")
+                          if x.is_file() and not (skip & set(x.parts)))
         if any(ch in g for ch in "*?["):
             return sorted(x for x in Path(".").glob(g) if x.is_file())
         p = Path(g)

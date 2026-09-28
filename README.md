@@ -1,6 +1,7 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.3.0. One file, stdlib only, no dependencies.
+Prototype v0.3.1. One file, stdlib only, no dependencies, and a test suite that runs in
+ten seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
 facts worth keeping — decisions, dead ends, house rules — live in people's heads.
@@ -228,6 +229,39 @@ never be seen. It also writes the MEMORY-HEALTH table into `$GITHUB_STEP_SUMMARY
 Verified on a real private repo: a PR that added a billing function without updating memory
 went red; re-verifying the memory in that same PR turned it green. (At the time the report
 read `9/10` — the tool has since grown checks 10, 11 and 12 and now reads `12/12`.)
+
+## Tests
+
+```sh
+python3 run_tests.py          # 32 tests, ~10s, stdlib only
+```
+
+No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
+directory and asserts on real process output and real exit codes, because most of the bugs this
+suite exists to prevent were invisible from the inside: a check that passed when it should have
+failed, or a heading that kept asserting a condition its own commit had removed.
+
+It pins the invariants that caught real bugs:
+
+- **fail closed** — a memory with no fingerprint is an error, not a pass; and drift is decided
+  by content, so pointing `verified_at` at a nonexistent commit (the squash-merge case) must
+  still fail rather than go quiet
+- **anchors resolve** — a deleted file must not be satisfied by its empty leftover directory,
+  while live anchors must not be flagged as dead
+- **normalisation may only downgrade** — reformatting yields a notice, and a real edit to the
+  same file still fails
+- **supersede marks the entry, not the file header** — the bug that made health unable to go
+  green again
+- **the accuracy gate** — a dead end riding the change that settled it fails, `--resolved-by`
+  clears it, the `(settled)` marker is idempotent, and a committed dead end is not dragged into
+  unrelated work
+- **hazards** — no owner, no enforcement, a missing CODEOWNERS rule, and a catch-all that only
+  *looks* like coverage all fail; creating the rule is the fix
+- **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
+  areas section naming the control
+
+CI runs the suite on Python 3.9 and 3.12, then runs the shipped example through its own memory
+gate and asserts the vendored copy still matches the tool at the root.
 
 ## Known gaps in this prototype
 

@@ -1,0 +1,51 @@
+name: tests
+
+# Two jobs, because they answer different questions:
+#   tests  -- does rmem behave the way it claims?
+#   example -- does the shipped example pass its own memory gate in CI, the way a
+#              real repo would? This is the tool used on itself.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Syntax check (stdlib only, no dependencies to install)
+        run: python3 -m py_compile rmem
+      - name: Run the suite
+        run: python3 run_tests.py
+
+  example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The example passes its own memory gate
+        working-directory: examples/billing-service
+        run: |
+          python3 tools/rmem index
+          python3 tools/rmem check --brief
+      - name: The vendored copy matches the tool at the root
+        # A drift here means the example is demonstrating a tool nobody is shipping.
+        run: cmp rmem examples/billing-service/tools/rmem
+      - name: Generated AGENTS.md is committed in sync
+        working-directory: examples/billing-service
+        run: |
+          python3 tools/rmem compile
+          git diff --exit-code AGENTS.md
