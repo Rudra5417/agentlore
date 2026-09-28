@@ -143,7 +143,7 @@ class Base(unittest.TestCase):
 class TestBaseline(Base):
     def test_fresh_repo_is_green(self):
         h = self.f.health()
-        self.assertEqual(h["total"], 12)
+        self.assertEqual(h["total"], 14)
         self.assertGreen(h)
 
     def test_unstamped_repo_fails_index_checks(self):
@@ -590,6 +590,178 @@ class TestRetractAndRm(Base):
         code, out = self.f.rmem("rm", "DEC-1970-01-01-nope")
         self.assertEqual(code, 1)
         self.assertIn("no memory with id", out)
+
+
+class TestContradictions(Base):
+    """Two live memories that claim the same thing must not disagree about it.
+
+    This is the only contradiction decidable without natural-language inference, so it is
+    the only one the tool asserts. These tests also pin the deliberate refusals: no
+    guessing at prose, no picking a winner, and no silencing a conflict anonymously.
+    """
+
+    def claim(self, title, value, key="refund.window_days"):
+        return self.f.add("--type", "convention", "--title", title, "--body", "b",
+                          "--anchor", "src/billing/**", "--key", key,
+                          "--value", value, "--author", "test")
+
+    def decision(self, title):
+        return self.f.add("--type", "decision", "--title", title, "--body", "b",
+                          "--anchor", "src/billing/**", "--author", "test")
+
+    def test_same_key_different_value_is_a_contradiction(self):
+        a = self.claim("Refunds close at 90 days", "90")
+        b = self.claim("Refunds close at 30 days", "30")
+        self.f.commit()
+        self.assertFails("claims-agree")
+        # both sides get named, and the tool refuses to choose for the reader
+        code, out = self.f.rmem("check")
+        self.assertIn(a, out)
+        self.assertIn(b, out)
+        self.assertIn("will not pick a winner", out)
+
+    def test_same_key_same_value_agrees(self):
+        self.claim("Window is 90 days", "90")
+        self.claim("Refund window, restated", "90")
+        self.f.commit()
+        self.assertGreen()
+
+    def test_different_keys_do_not_collide(self):
+        self.claim("Window is 90 days", "90", key="refund.window_days")
+        self.claim("Provider retries are 3", "3", key="provider.retries")
+        self.f.commit()
+        self.assertGreen()
+
+    def test_supersede_to_a_missing_id_fails_the_chain_check(self):
+        """Retiring a memory in favour of something that does not exist points nowhere.
+
+        Note what supersede does NOT do: it retires the target even when the replacement id
+        is fiction, so the entry does leave the live set. What is then broken is the
+        retirement itself -- which is exactly what supersedes-acyclic is for.
+        """
+        a = self.claim("Refunds close at 90 days", "90")
+        self.claim("Refunds close at 30 days", "30")
+        self.f.commit()
+        self.f.rmem("supersede", a, "DEC-does-not-exist")
+        self.f.rmem("index")
+        h = self.f.health()
+        self.assertFails("supersedes-acyclic", h)
+        self.assertNotIn("claims-agree", h["failed"], "the entry did get retired")
+
+    def test_add_refuses_a_key_without_a_value_and_vice_versa(self):
+        code, out = self.f.rmem("add", "--type", "convention", "--title", "x",
+                                "--key", "refund.window_days", "--author", "test")
+        self.assertEqual(code, 1)
+        self.assertIn("--value", out)
+        code, out = self.f.rmem("add", "--type", "convention", "--title", "x",
+                                "--value", "90", "--author", "test")
+        self.assertEqual(code, 1)
+        self.assertIn("--key", out)
+
+    def test_declaring_coexistence_requires_a_reason(self):
+        """Silencing a conflict has to be attributable -- same rule as retract."""
+        a = self.claim("Refunds close at 90 days", "90")
+        code, out = self.f.rmem("verify", a, "--coexists-with", "DEC-whatever")
+        self.assertEqual(code, 1)
+        self.assertIn("--coexists-why", out)
+        code, out = self.f.rmem("add", "--type", "convention", "--title", "y",
+                                "--coexists-with", a, "--author", "test")
+        self.assertEqual(code, 1)
+        self.assertIn("--coexists-why", out)
+
+    def test_declaring_coexistence_on_an_existing_entry_clears_it(self):
+        """The resolution has to work on an existing entry: re-adding would duplicate it."""
+        a = self.claim("Refunds close at 90 days", "90")
+        b = self.claim("Refunds close at 30 days", "30")
+        self.f.commit()
+        self.assertFails("claims-agree")
+
+        code, out = self.f.rmem("verify", b, "--coexists-with", a,
+                                "--coexists-why", "partner-tier contracts override it")
+        self.assertEqual(code, 0, out)
+        self.f.rmem("index")
+        self.assertGreen()
+        # resolved, but NOT hidden: the deliberate disagreement stays visible
+        code, out = self.f.rmem("check")
+        self.assertIn("declared coexistence", out)
+        self.assertIn("partner-tier contracts override it", out)
+
+    def test_superseding_the_wrong_one_clears_it(self):
+        a = self.claim("Refunds close at 90 days", "90")
+        b = self.claim("Refunds close at 30 days", "30")
+        self.f.commit()
+        self.f.rmem("supersede", a, b)
+        self.f.rmem("index")
+        self.assertGreen()
+
+    def test_retracting_the_one_that_was_never_true_clears_it(self):
+        a = self.claim("Refunds close at 90 days", "90")
+        self.claim("Refunds close at 30 days", "30")
+        self.f.commit()
+        self.f.rmem("retract", a, "--reason", "the window was never 90 days")
+        self.f.rmem("index")
+        self.assertGreen()
+
+    def test_key_without_a_value_is_a_notice_not_a_failure(self):
+        """Incomplete metadata must never break the build: abstain, do not punish."""
+        eid = self.f.add("--type", "convention", "--title", "Hand edited later",
+                         "--anchor", "src/billing/**", "--author", "test")
+        p = self.f.dir / ".memory/conventions.md"
+        p.write_text(p.read_text().replace("id: " + eid,
+                                           "id: " + eid + "\nkey: orphan.key", 1))
+        self.f.rmem("index")
+        self.assertGreen()
+        code, out = self.f.rmem("check")
+        self.assertIn("no value", out)
+
+
+class TestRetirementChains(Base):
+    """Following a replacement pointer must terminate at something live.
+
+    The reviewer who reads "replaced by X" and then finds X retracted has no rule at all
+    and no signal that anything is wrong. Hand-edits and retract-after-supersede are how
+    this actually happens.
+    """
+
+    def decision(self, title):
+        return self.f.add("--type", "decision", "--title", title, "--body", "b",
+                          "--anchor", "src/billing/**", "--author", "test")
+
+    def test_a_normal_supersession_chain_is_fine(self):
+        a = self.decision("First rule")
+        b = self.decision("Second rule")
+        self.f.commit()
+        self.f.rmem("supersede", a, b)
+        self.f.rmem("index")
+        self.assertGreen()
+
+    def test_a_chain_ending_on_a_retracted_memory_fails(self):
+        a = self.decision("First rule")
+        b = self.decision("Second rule")
+        self.f.commit()
+        self.f.rmem("supersede", a, b)
+        self.f.rmem("retract", b, "--reason", "the second rule was wrong too")
+        self.f.rmem("index")
+        h = self.f.health()
+        self.assertFails("supersedes-acyclic", h)
+        code, out = self.f.rmem("check")
+        self.assertIn("itself retired", out)
+
+    def test_a_cycle_fails_and_is_reported_once(self):
+        a = self.decision("First rule")
+        b = self.decision("Second rule")
+        self.f.commit()
+        p = self.f.dir / ".memory/decisions.md"
+        t = p.read_text()
+        t = t.replace("id: " + a, "id: " + a + "\nsuperseded_by: " + b, 1)
+        t = t.replace("id: " + b, "id: " + b + "\nsuperseded_by: " + a, 1)
+        p.write_text(t)
+        self.f.rmem("index")
+
+        h = self.f.health()
+        self.assertFails("supersedes-acyclic", h)
+        code, out = self.f.rmem("check")
+        self.assertEqual(out.count("a cycle"), 1, "a 2-cycle must be reported once:\n" + out)
 
 
 class TestCliRobustness(Base):

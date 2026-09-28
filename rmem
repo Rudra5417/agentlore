@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.3.2"
+VERSION = "0.4.0"
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
@@ -136,11 +136,17 @@ def parse_file(path):
         e["body"] = rest.strip()
         e["file"] = path.name
         e["lineno"] = text.count("\n", 0, mark.start()) + 1
-        for key in ("anchors", "supersedes"):
+        for key in ("anchors", "supersedes", "coexists_with"):
             e[key] = [x for x in re.split(r"[,\s]+", e.get(key, "")) if x]
         e.setdefault("id", "")
         e.setdefault("type", "")
         e.setdefault("status", "accepted")
+        # A claim makes a memory comparable with other memories. Two live memories that
+        # declare the SAME key but DIFFERENT values contradict each other -- and that is
+        # the only contradiction this tool can decide without natural-language inference.
+        e.setdefault("key", "")
+        e.setdefault("value", "")
+        e.setdefault("coexists_why", "")
         entries.append(e)
     return entries
 
@@ -416,6 +422,18 @@ def cmd_init(args):
 # ----------------------------------------------------------------------- add
 
 def cmd_add(args):
+    if (args.key or "").strip() and not (args.value or "").strip():
+        print("--key needs --value: a claim with no value cannot be compared with anything.")
+        return 1
+    if (args.value or "").strip() and not (args.key or "").strip():
+        print("--value needs --key: name the thing this memory makes a claim about.")
+        return 1
+    if args.coexists_with and not (args.coexists_why or "").strip():
+        print("--coexists-with needs --coexists-why.")
+        print("  Declaring two contradictory memories coexistent silences a real conflict,")
+        print("  so the declaration has to carry its reason. Nothing gets switched off")
+        print("  anonymously -- same rule as retract.")
+        return 1
     MEM.mkdir(exist_ok=True)
     fname = FILES[args.type]
     path = MEM / fname
@@ -441,6 +459,12 @@ def cmd_add(args):
         lines.append("enforcement: %s" % args.enforcement)
     if args.supersedes:
         lines.append("supersedes: %s" % " ".join(args.supersedes))
+    if args.key:
+        lines.append("key: %s" % args.key)
+        lines.append("value: %s" % args.value)
+    if args.coexists_with:
+        lines.append("coexists_with: %s" % " ".join(args.coexists_with))
+        lines.append("coexists_why: %s" % args.coexists_why)
     raw_fp, norm_fp = anchor_fingerprints({"anchors": args.anchor})
     lines += [
         "author: %s" % args.author,
@@ -483,7 +507,8 @@ def gh_escape(text):
 
 
 def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None, unsettled=None,
-                     hazards=None):
+                     hazards=None, contradictions=None, coexisting=None, unvalued=None,
+                     chains=None):
     """Turn every problem into a CI annotation anchored at the offending line."""
     findings = []
     known = set(e["id"] for e in entries)
@@ -559,6 +584,27 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
           'name the control that really enforces it with --enforcement, or add the '
           'CODEOWNERS rule it claims, or drop the hazard: a wish is worse than nothing.'
           % (e["title"], ", ".join(e["anchors"]) or "nothing", why))
+    for a, b in (contradictions or []):
+        key = a.get("key", "")
+        F("error", b, "MEMORY-HEALTH: two memories contradict each other",
+          'Two live memories claim different things about "%s": %s says "%s", %s (in '
+          '.memory/%s) says "%s". rmem will not pick a winner -- both are surfaced, and '
+          'resolving it is a human act. If %s is now wrong: "rmem supersede %s %s". If it '
+          'was never true: "rmem retract %s --reason ...". If both hold in different '
+          'contexts: re-add %s with --coexists-with %s --coexists-why "...". Then rmem index.'
+          % (key, a["id"], a["value"], b["id"], b["file"], b["value"],
+             a["id"], a["id"], b["id"], a["id"], b["id"], a["id"]))
+    for e, msg in (chains or []):
+        F("error", e, "MEMORY-HEALTH: broken retirement chain",
+          "The chain of replacements is broken: " + msg)
+    for a, b in (coexisting or []):
+        F("notice", b, "MEMORY-HEALTH: coexisting claims (declared)",
+          'These two disagree about "%s" and that is recorded as intentional: %s'
+          % (a.get("key", ""), a.get("coexists_why") or b.get("coexists_why") or "(no reason given)"))
+    for e in (unvalued or []):
+        F("notice", e, "MEMORY-HEALTH: claim without a value",
+          '%s declares key "%s" but no value, so nothing can be compared with it. '
+          'Add --value, or drop --key.' % (e["id"], e.get("key", "")))
     if not index_ok:
         F("error", None, "MEMORY-HEALTH: no index", "The derived index is missing. Run: rmem index")
     elif not index_fresh:
@@ -756,12 +802,96 @@ def cmd_check(args):
             hazards_unbacked.append((e, "; ".join(why)))
     add("hazards-enforced", not hazards_unbacked, "%d unbacked" % len(hazards_unbacked))
 
+    # 13 two live memories that claim the same thing must not disagree about it. This is
+    # the only contradiction that can be decided WITHOUT natural-language inference: the
+    # author declared both memories talk about the same key, so a differing value is a
+    # contradiction by construction rather than a guess. Prose that contradicts other prose
+    # is deliberately never guessed at -- similarity is not contradiction ("David works at
+    # Google" and "Sarah works at Microsoft" score as similar), and the systems that do
+    # guess retire true memories silently. See README.
+    claims = {}
+    for e in live:
+        k = (e.get("key") or "").strip()
+        if k and (e.get("value") or "").strip():
+            claims.setdefault(k, []).append(e)
+    contradictions, coexisting = [], []
+    for key, group in sorted(claims.items()):
+        for i, a in enumerate(group):
+            for b in group[i + 1:]:
+                if a["value"].strip() == b["value"].strip():
+                    continue
+                # An explicit, reasoned coexistence declaration means a human already made
+                # the call. A genuinely context-dependent pair must be preserved, not
+                # collapsed: forcing a winner would destroy a true memory.
+                if b["id"] in a["coexists_with"] or a["id"] in b["coexists_with"]:
+                    coexisting.append((a, b))
+                else:
+                    contradictions.append((a, b))
+    unvalued = [e for e in live
+                if (e.get("key") or "").strip() and not (e.get("value") or "").strip()]
+    add("claims-agree", not contradictions, "%d contradiction(s)" % len(contradictions))
+
+    # 14 following a retirement pointer must terminate at something live. A cycle, or a
+    # chain landing on a superseded or retracted memory, means the reviewer who follows
+    # "this was replaced by X" arrives at a dead end: the area has no live rule and nothing
+    # says so. Hand-editing and retract-after-supersede are the usual routes in.
+    byid = {e["id"]: e for e in entries if e["id"]}
+    chain_problems = []
+    replaced_by = {}
+    for e in entries:
+        nxt = (e.get("superseded_by") or "").strip()
+        if not nxt:
+            continue
+        if nxt in byid:
+            replaced_by[e["id"]] = nxt
+        else:
+            # A retirement pointing at nothing leaves the reader with no live rule AND no
+            # signal that anything is wrong -- the same dead end as a cycle, reached faster.
+            chain_problems.append((e, "%s is marked as replaced by %s, but no memory with that "
+                                      "id exists, so the retirement points nowhere. Point it at "
+                                      "the real successor, or re-stamp it if it is still true "
+                                      "(rmem verify %s)." % (e["id"], nxt, e["id"])))
+    for e in entries:                      # "I supersede X" is the same edge, read forwards
+        for ref in e["supersedes"]:
+            if ref in byid:
+                replaced_by.setdefault(ref, e["id"])
+    for start in sorted(replaced_by):
+        seen, cur, cycle = [start], replaced_by[start], False
+        while cur in replaced_by:
+            if cur in seen:
+                cycle = True
+                # Report each cycle once, from its lowest-sorted member, and show the loop
+                # itself rather than a self-referential sentence.
+                loop = seen[seen.index(cur):]
+                if start == min(loop):
+                    chain_problems.append((byid[start],
+                                           "%s -- a cycle, so the chain never reaches a live "
+                                           "memory and the area has no rule at all. Break it by "
+                                           "re-stamping whichever entry is still true "
+                                           "(rmem verify <id>) or retracting it "
+                                           "(rmem retract <id> --reason ...)."
+                                           % " -> ".join(loop + [cur])))
+                break
+            seen.append(cur)
+            cur = replaced_by[cur]
+        if cycle:
+            continue
+        end = byid.get(cur)
+        if end is not None and end["status"] in DEAD_STATUSES:
+            chain_problems.append((byid[start],
+                                   "%s is replaced by %s, but %s is %s -- so following the "
+                                   "pointer leads to a memory that is itself retired. Point it at "
+                                   "the live successor instead."
+                                   % (start, cur, cur, end["status"])))
+    add("supersedes-acyclic", not chain_problems, "%d broken chain(s)" % len(chain_problems))
+
     passed = sum(1 for _, ok, _ in checks if ok)
     total = len(checks)
     color = GREEN if passed == total else RED
 
     findings = collect_findings(entries, live, index_ok, fresh, stale, restyled, unsettled,
-                                hazards_unbacked)
+                                hazards_unbacked, contradictions, coexisting, unvalued,
+                                chain_problems)
 
     if args.brief:
         bad = [n for n, ok, _ in checks if not ok]
@@ -810,6 +940,33 @@ def cmd_check(args):
             print("    problem: %s" % why)
             print("    %s-> a memory cannot block an edit. Name the real control, add the"
                   " CODEOWNERS rule, or drop the hazard.%s" % (DIM, OFF))
+    if contradictions:
+        print("\n%stwo live memories contradict each other:%s" % (BOLD, OFF))
+        for a, b in contradictions:
+            print("  claim: %s" % a.get("key", ""))
+            print("    %s%s%s  %s" % (BOLD, a["id"], OFF, a["title"]))
+            print("      says: %s" % a["value"])
+            print("    %s%s%s  %s" % (BOLD, b["id"], OFF, b["title"]))
+            print("      says: %s" % b["value"])
+            print("    %s-> rmem will not pick a winner. If one is now wrong: supersede it.%s" % (DIM, OFF))
+            print("    %s-> If one was never true: rmem retract <id> --reason ...%s" % (DIM, OFF))
+            print("    %s-> If both hold in different contexts, say so: --coexists-with + --coexists-why.%s"
+                  % (DIM, OFF))
+    if chain_problems:
+        print("\n%sbroken retirement chains:%s" % (BOLD, OFF))
+        for e, msg in chain_problems:
+            print("  %s%s%s  %s" % (BOLD, e["id"], OFF, e["title"]))
+            print("    %s" % msg)
+    if coexisting:
+        print("\n%sdeclared coexistence -- both true, on purpose:%s" % (DIM, OFF))
+        for a, b in coexisting:
+            print("%s  %s vs %s  -- %s%s" % (DIM, a["id"], b["id"],
+                  a.get("coexists_why") or b.get("coexists_why") or "?", OFF))
+    if unvalued:
+        print("\n%sclaims with no value -- nothing can be compared with them:%s" % (DIM, OFF))
+        for e in unvalued:
+            print("%s  %s  key: %s%s" % (DIM, e["id"], e.get("key", ""), OFF))
+        print("%s-> add --value, or drop the --key.%s" % (DIM, OFF))
     if restyled:
         print("\n%sreformatted (bytes changed, content equivalent -- no action needed):%s"
               % (DIM, OFF))
@@ -1039,6 +1196,12 @@ def cmd_verify(args):
     This is the cheap resolution for a STALE flag: without it the health gate
     is just nagging, and nagging gates get disabled.
     """
+    if args.coexists_with and not (args.coexists_why or "").strip():
+        print("--coexists-with needs --coexists-why.")
+        print("  Declaring two contradictory memories coexistent silences a real conflict,")
+        print("  so the declaration has to carry its reason. Nothing gets switched off")
+        print("  anonymously -- same rule as retract.")
+        return 1
     rev = head_rev()
     if not rev:
         print("not a git repo / no commits -- cannot stamp a revision")
@@ -1093,6 +1256,24 @@ def cmd_verify(args):
                     # condition, which is the first thing the next agent reads.
                     if not re.search(r"(?m)^##\s+.*\((settled|superseded)\)\s*$", b):
                         b = re.sub(r"(?m)^##\s+(.+?)\s*$", r"## \1 (settled)", b, count=1)
+                # Declaring coexistence has to be possible on an EXISTING entry: re-adding a
+                # memory would create a duplicate rather than settle the pair, so the
+                # resolution for a contradiction lives here rather than in `add`.
+                if args.coexists_with:
+                    cur = re.search(r"(?m)^coexists_with:\s*(.*)$", b)
+                    have = [x for x in re.split(r"[,\s]+", cur.group(1)) if x] if cur else []
+                    merged = " ".join(sorted(set(have) | set(args.coexists_with)))
+                    if cur:
+                        b = re.sub(r"(?m)^coexists_with:.*$", "coexists_with: " + merged, b)
+                    else:
+                        b = re.sub(r"(?m)^(status:.*)$", r"\1\ncoexists_with: " + merged,
+                                   b, count=1)
+                    if "coexists_why:" in b:
+                        b = re.sub(r"(?m)^coexists_why:.*$",
+                                   "coexists_why: " + args.coexists_why, b)
+                    else:
+                        b = re.sub(r"(?m)^(coexists_with:.*)$",
+                                   r"\1\ncoexists_why: " + args.coexists_why, b, count=1)
                 done.append(re.search(r"(?m)^id:\s*(\S+)", b).group(1))
             rebuilt.append(b)
         p.write_text("".join(rebuilt))
@@ -1136,6 +1317,15 @@ def main(argv=None):
     s.add_argument("--anchor", action="append", default=[], help="file glob this memory is about (repeatable)")
     s.add_argument("--evidence", default="", help="required for dead-end: the commit/PR/error that proved it")
     s.add_argument("--supersedes", action="append", default=[], help="id of a memory this replaces")
+    s.add_argument("--key", default="",
+                   help="what this memory makes a claim about, e.g. refund.window_days "
+                        "(two live memories with the same key must agree on --value)")
+    s.add_argument("--value", default="", help="the claim itself, e.g. 90 (pair with --key)")
+    s.add_argument("--coexists-with", action="append", default=[],
+                   help="id of a live memory that contradicts this one for a real reason "
+                        "(context-dependent facts); requires --coexists-why")
+    s.add_argument("--coexists-why", default="",
+                   help="why both of the contradictory claims are true")
     s.add_argument("--resolved-by", default="",
                    help="dead-end only: what settled it (commit/PR). Omit if it still holds.")
     s.add_argument("--owner", default="",
@@ -1193,6 +1383,10 @@ def main(argv=None):
     s.add_argument("--anchor", action="append", default=[], help="also narrow/reset the scope")
     s.add_argument("--resolved-by", default="",
                    help="also record what settled this dead end")
+    s.add_argument("--coexists-with", action="append", default=[],
+                   help="declare that this memory and another live memory contradict each "
+                        "other on purpose (context-dependent facts); requires --coexists-why")
+    s.add_argument("--coexists-why", default="", help="why both contradictory claims are true")
     s.set_defaults(func=cmd_verify)
 
     s = sub.add_parser("list", help="list memories")

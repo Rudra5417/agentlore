@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.3.2. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.4.0. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -36,7 +36,9 @@ rmem add --type hazard --title T --body B --anchor "src/billing/**" \
 rmem check [--brief|--github] [--since REF]  # MEMORY-HEALTH; exit 1 when broken
 rmem recall "add a new payment provider"   # bounded context block for a task
 rmem compile                               # emit conventions + hazards into AGENTS.md
+rmem add ... --key refund.window_days --value 90  # a claim: comparable with other claims
 rmem verify <id> [--anchor glob] [--resolved-by S]  # "still true" — re-stamp / narrow
+rmem verify <id> --coexists-with <other> --coexists-why "..."   # both true, on purpose
 rmem supersede <old-id> <new-id>           # was true, now replaced
 rmem retract <id> --reason "..."           # was NEVER true — keeps the text, labels it
 rmem rm <id>                               # must not exist at all — deletes the block
@@ -47,7 +49,7 @@ Types: `decision`, `dead-end`, `convention`, `hazard`.
 
 ## MEMORY-HEALTH
 
-Twelve checks. The value is not the score — it is that a failure **names the broken thing**.
+Fourteen checks. The value is not the score — it is that a failure **names the broken thing**.
 
 | check | catches |
 |---|---|
@@ -62,6 +64,8 @@ Twelve checks. The value is not the score — it is that a failure **names the b
 | anchors-stamped | a memory with no fingerprint — drift would be undetectable |
 | dead-ends-settled | a dead end recorded by the very change that settled it |
 | **hazards-enforced** | **a "do not touch" that no control actually enforces** |
+| **claims-agree** | **two live memories claiming different things about the same key** |
+| **supersedes-acyclic** | **a retirement chain that loops or lands on a retired memory** |
 
 One softer signal is reported but never breaks the build: a **notice** when anchored files
 were only reformatted (bytes changed, meaning identical).
@@ -97,6 +101,67 @@ Agents read the markdown directly and the heading is the first thing they see, s
 body does not protect them. A gate can force an agent to *state* something; it cannot make an
 agent reword a title it has already chosen. So the tool rewrites the heading itself —
 `rmem add|verify --resolved-by` appends ` (settled)`, idempotently.
+
+## Contradictions: what can be decided, and what must never be guessed
+
+Every memory product has to answer "what if two memories disagree?". The honest answer is that
+most of it cannot be answered mechanically, so `rmem` splits the problem.
+
+**Decidable, so it is enforced.** A memory may declare a claim:
+
+```sh
+rmem add --type convention --title "Refunds close at 90 days" \
+         --anchor 'src/billing/**' --key refund.window_days --value 90
+```
+
+Two *live* memories that declare the same key and different values contradict each other **by
+construction** — no inference, no model, no similarity threshold, and therefore no
+false-positive surface. `claims-agree` fails and names both sides.
+
+**Not decidable, so it is never guessed.** Two memories that disagree in prose are not compared.
+No embedding score, no language model in the check. That is not modesty, it is what the evidence
+says:
+
+| who tried | what actually happened |
+|---|---|
+| Graphiti (Zep), LLM edge invalidation | an unscoped candidate search retired **1,616 of 3,950 facts (41%)**; a hand audit of four found **three were collateral**, not real change — and it was silent |
+| Mnemos, embedding similarity at threshold 0.55 | its own README's top known limitation: on long contexts it flags *"David works at Google"* vs *"Sarah works at Microsoft"* as a conflict |
+| NLI models on context mismatch (REFNLI) | finetuned NLI and few-shot LLMs both fail to notice the mismatch, giving **>80% false positives** |
+| STALE benchmark | "implicit conflict" — a later fact invalidating an earlier one without saying so — is unsolved; the best model scores **55.2%** |
+
+A contradiction detector that is wrong is worse than none, in both directions: false positives
+either train people to ignore the gate, or silently retire true memories. Graphiti's numbers are
+what that looks like at production scale.
+
+So the rules are:
+
+* **Surface, never resolve.** `rmem` will not pick a winner. It names both sides and stops.
+  Resolution is a human act, recorded as a normal diff.
+* **Abstain on ambiguity.** A `--key` with no `--value` is a *notice*, not a failure. Incomplete
+  metadata must never break the build.
+* **Some conflicts are real and must not be collapsed.** "Python at work, JS for personal
+  projects" is not a contradiction to resolve — it is a context-dependent pair. Declaring that
+  takes a reason:
+
+  ```sh
+  rmem verify <id> --coexists-with <other> --coexists-why "partner-tier contracts override it"
+  ```
+
+  The pair then reports as `declared coexistence` and stops failing: visible, attributable, never
+  silent. `--coexists-why` is required for exactly the same reason `retract` needs `--reason` —
+  nothing gets switched off anonymously.
+
+**Latest-wins is not the rule.** When one memory supersedes another, the tool records *that* it
+happened and *what replaced it*; it does not decide the new one is true. `StateFuse`, the research
+system closest to this posture, is explicit that its measured gain comes from **surfacing plus
+abstention**, not from choosing a better winner.
+
+### The retirement chain has to terminate
+
+`supersedes-acyclic` closes the neighbouring hole: following "this was replaced by X" must land
+on something live. A cycle (A replaced by B, B replaced by A), or a chain ending on a superseded
+or retracted memory, means the area has no live rule **and nothing says so**. The easy way in is
+`rmem supersede A <missing-id>` — it retires A whether or not the replacement exists.
 
 ## Hazards: "don't touch billing"
 
@@ -252,12 +317,12 @@ never be seen. It also writes the MEMORY-HEALTH table into `$GITHUB_STEP_SUMMARY
 
 Verified on a real private repo: a PR that added a billing function without updating memory
 went red; re-verifying the memory in that same PR turned it green. (At the time the report
-read `9/10` — the tool has since grown checks 10, 11 and 12 and now reads `12/12`.)
+read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/14`.)
 
 ## Tests
 
 ```sh
-python3 run_tests.py          # 42 tests, ~15s, stdlib only
+python3 run_tests.py          # 56 tests, ~20s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
@@ -283,6 +348,11 @@ It pins the invariants that caught real bugs:
   *looks* like coverage all fail; creating the rule is the fix
 - **retract** — keeps the body, labels the heading, requires a reason, is idempotent, and is
   excluded from live checks *in both directions* (an obligation while live, history after)
+- **contradiction** — the same key with different values fails and names both sides; a retired
+  entry no longer contradicts; a key with no value is a notice rather than a failure; and
+  declaring coexistence without a reason is refused
+- **retirement chains** — a supersede to a missing id, a chain landing on a retracted memory, and
+  a hand-edited cycle all fail, and a 2-cycle is reported once rather than twice
 - **rm** — removes only the target block, never the file header even for the first entry,
   leaves a parseable file, and says out loud that history is untouched
 - **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
@@ -294,9 +364,11 @@ gate and asserts the vendored copy still matches the tool at the root.
 
 ## Known gaps in this prototype
 
-* **No contradiction detection.** Two live memories that disagree are not caught. `gitmem`
-  has a conflict queue; `lore` flags them in an audit. This is the hardest remaining piece
-  and is deliberately not faked with keyword heuristics.
+* **Contradiction detection covers DECLARED claims only.** Two memories that disagree in prose
+  are not caught -- only memories that declare the same `--key` with different `--value`. That
+  limit is the main design claim of v0.4.0, not an oversight; the section above is the evidence.
+* **No conflict queue as a separate artifact.** `gitmem` emits a browsable `conflicts.json`;
+  here a contradiction is a failing check, so it is enforced rather than advisory.
 * **No `rmem move`/re-anchor workflow.** Changing which files a memory covers means
   `verify --anchor`, which also re-stamps it; there is no way to re-scope without asserting
   it is still true.
