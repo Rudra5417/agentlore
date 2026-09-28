@@ -1,0 +1,79 @@
+name: rmem - memory health
+description: >-
+  Fail the check when code moved under a memory and the memory did not. Typed memories
+  live in .memory/ and are reviewed like code; this runs the gate and annotates the diff.
+author: Rudra Patel
+
+branding:
+  icon: book-open
+  color: purple
+
+inputs:
+  since:
+    description: >-
+      Commit or ref that this change starts from (use the PR base sha). Required for the
+      dead-ends-settled check to see what this change touched; without it that check cannot
+      tell, and a silent check is a disabled check.
+    required: false
+    default: ""
+  github:
+    description: Emit check-run annotations anchored on the diff, plus a job summary table.
+    required: false
+    default: "true"
+  fail-on-broken:
+    description: >-
+      Fail the step when MEMORY-HEALTH is broken. Set to false to report without blocking
+      (the run then always succeeds, so do not use that as your merge gate).
+    required: false
+    default: "true"
+  compile-in-sync:
+    description: >-
+      Also assert the committed AGENTS.md matches what `rmem compile` generates. Requires
+      AGENTS.md to be tracked, otherwise the comparison would pass vacuously.
+    required: false
+    default: "false"
+  working-directory:
+    description: Directory containing .memory/ (the repository root by default).
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    # .memory/index.db is gitignored: a derived build artifact, never reviewed, never
+    # merged. It is rebuilt from the markdown here every run, which also exercises the
+    # index-fresh check instead of trusting a stale committed index.
+    - name: Rebuild the derived index
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: python3 "${{ github.action_path }}/rmem" index
+
+    - name: MEMORY-HEALTH
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        args=(check)
+        if [ "${{ inputs.github }}" = "true" ]; then args+=(--github); fi
+        if [ -n "${{ inputs.since }}" ]; then args+=(--since "${{ inputs.since }}"); fi
+        code=0
+        python3 "${{ github.action_path }}/rmem" "${args[@]}" || code=$?
+        if [ "$code" -ne 0 ]; then
+          if [ "${{ inputs.fail-on-broken }}" = "true" ]; then
+            exit "$code"
+          fi
+          echo "::warning::MEMORY-HEALTH is broken but fail-on-broken is false, so this run passes anyway."
+        fi
+
+    # Typed fragments are the source of truth; AGENTS.md is a build target. If they
+    # disagree, the committed AGENTS.md is lying to every agent that reads it.
+    - name: AGENTS.md is in sync with .memory/
+      if: ${{ inputs.compile-in-sync == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        python3 "${{ github.action_path }}/rmem" compile > /dev/null
+        if ! git ls-files --error-unmatch AGENTS.md > /dev/null 2>&1; then
+          echo "::error::AGENTS.md is not tracked, so an out-of-sync build cannot be detected (git diff is silent on untracked files). Commit it, or set compile-in-sync: false."
+          exit 1
+        fi
+        git diff --exit-code AGENTS.md

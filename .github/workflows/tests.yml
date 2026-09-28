@@ -1,9 +1,11 @@
 name: tests
 
-# Two jobs, because they answer different questions:
+# Three jobs, because they answer different questions:
 #   tests  -- does rmem behave the way it claims?
 #   example -- does the shipped example pass its own memory gate in CI, the way a
 #              real repo would? This is the tool used on itself.
+#   action -- does the action work the way a consumer will use it, in BOTH directions?
+#             A gate nobody has watched fail is decoration.
 on:
   push:
     branches: [main]
@@ -49,3 +51,41 @@ jobs:
         run: |
           python3 tools/rmem compile
           git diff --exit-code AGENTS.md
+
+  # The action is what strangers actually consume, so it is exercised the way a consumer
+  # uses it: `uses: ./` resolves this repo's action.yml at the root, with no vendored copy.
+  # Both outcomes are asserted -- green on healthy memory, red on broken memory -- so a
+  # change that quietly turns the gate into a no-op fails the build here.
+  action:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The action passes a healthy gate
+        uses: ./
+        with:
+          working-directory: examples/billing-service
+          compile-in-sync: "true"
+
+      - name: Break it -- move code under a memory and leave the memory alone
+        working-directory: examples/billing-service
+        run: echo "# drift introduced by CI" >> src/billing/charge.py
+
+      - name: The action must now fail
+        id: broken
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: examples/billing-service
+
+      - name: Assert it failed
+        run: |
+          if [ "${{ steps.broken.outcome }}" != "failure" ]; then
+            echo "::error::the action passed on broken memory, so the gate is decoration"
+            exit 1
+          fi
+          echo "The action failed on broken memory, as it should."
+

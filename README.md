@@ -293,6 +293,55 @@ repo under test: experiment copies, the tool's README and its docs directory all
   that also refuses to hand over memory it suspects is wrong — and nobody binds a memory to
   the control that enforces it.
 
+## Use it as a GitHub Action
+
+```yaml
+name: memory-health
+on: [pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # only so an annotation can name the file that drifted
+      - uses: Rudra5417/rmem@v1
+        with:
+          since: ${{ github.event.pull_request.base.sha }}
+```
+
+That is the whole integration: no vendored copy, no `tools/rmem`, nothing to keep in sync. The
+action rebuilds the derived index, runs the gate, and annotates the diff.
+
+| input | default | what it does |
+|---|---|---|
+| `since` | *(empty)* | commit/ref the change starts from; required for `dead-ends-settled` |
+| `github` | `true` | emit check-run annotations and the job summary table |
+| `fail-on-broken` | `true` | set `false` to report without blocking the merge |
+| `compile-in-sync` | `false` | also assert the committed `AGENTS.md` matches `rmem compile` |
+| `working-directory` | `.` | directory containing `.memory/` |
+
+`since` is the only input worth setting, and it is the only one that matters: without it
+`dead-ends-settled` cannot tell what your change touched, and a silent check is a disabled check.
+
+`fetch-depth: 0` is **not** needed for drift detection — that is content-based, so a squashed or
+shallow history still fails correctly. It is only there so the annotation can name the specific
+file that invalidated a memory.
+
+Two details the action gets right that a hand-rolled workflow usually does not:
+
+* With `compile-in-sync`, it first checks that `AGENTS.md` is actually tracked. `git diff` is
+  silent on an untracked file, so a naive in-sync check passes vacuously forever.
+* `fail-on-broken: false` reports and emits a warning rather than quietly succeeding, because a
+  gate that is configured off should say so out loud.
+
+If you would rather not depend on a third-party action, vendor the single file and run it
+yourself — that is the next section, and it is the same tool either way.
+
 ## CI: the review gate
 
 `.github/workflows/memory-health.yml` is the whole integration:
@@ -381,7 +430,10 @@ gate and asserts the vendored copy still matches the tool at the root.
 * **No compression.** `lore` digests at 500 entries. `rmem` has no answer for growth.
 * **No history sweep for `rm`.** The tool warns that history is untouched but cannot tell you
   whether a given string ever appeared in a memory. `git log -S` does that, unassisted.
-* **The Action expects `rmem` vendored at `tools/rmem`.** A published action is the real fix.
+* **No Marketplace listing.** The action is consumed by tag (`Rudra5417/rmem@v1`), which is
+  all `uses:` needs; Marketplace needs a published release plus publisher settings.
+* **No `latest`/floating major beyond `v1`.** Standard for actions (re-point `v1` at each
+  release), but it does mean `@v1` is a moving target by design.
 * **AST-aware anchors remain the right upgrade** for the raw hash; the stripped view only
   softens the most common false positive (reformatting), it does not eliminate it.
 * **`dead-ends-settled` has never been observed firing on a live agent run.** It was proven by
