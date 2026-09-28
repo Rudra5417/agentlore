@@ -1,6 +1,6 @@
 # AGENTS.md
 
-<!-- rmem:begin (generated from .memory/conventions.md - do not edit) -->
+<!-- rmem:begin (generated from .memory/ - do not edit) -->
 ## House rules
 
 - **Use httpx, never requests** `src/api/**`
