@@ -19,6 +19,7 @@ Usage:
   BENCH_URL=... BENCH_MODEL=... python3 bench/run_trial.py --runs 6
 """
 import argparse
+import ast
 import json
 import os
 import re
@@ -66,6 +67,21 @@ def build_arm(arm: str, dest: Path) -> None:
         r = subprocess.run(cmd, cwd=dest, capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit(f"seeding arm A failed: {' '.join(cmd)}\n{r.stdout}{r.stderr}")
+
+
+def parses(src: str) -> bool:
+    """Does the arm's final file actually load?
+
+    classify() reads text, so a file that does not parse can still look like a correct answer --
+    a docstring missing its closing quotes scores as "keyed on request_id" from the text alone.
+    Reporting that as an outcome is how a run that produced nothing usable gets counted as a
+    success. Parse first, then classify.
+    """
+    try:
+        ast.parse(src)
+        return True
+    except SyntaxError:
+        return False
 
 
 def classify(src: str) -> str:
@@ -274,7 +290,9 @@ def main():
     for arm in arms:
         for n in range(1, a.runs + 1):
             r = run_one(arm, n, task)
-            r["verdict"] = classify(r["refund_src"])
+            r["parses"] = parses(r["refund_src"]) if r["refund_src"].strip() else False
+            r["verdict"] = classify(r["refund_src"]) if r["parses"] else \
+                "DOES NOT PARSE -- " + classify(r["refund_src"])
             results.append(r)
             print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
                   f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}",
@@ -292,8 +310,9 @@ def main():
             print(f"  {label:12} no valid runs ({inv} invalid)")
             continue
         print(f"  {label:12} valid_n={len(rs)} invalid={inv} "
-              f"trap={sum('trap' in x['verdict'] for x in rs)} "
-              f"correct={sum('correct' in x['verdict'] for x in rs)} "
+              f"trap={sum(x['parses'] and 'trap' in x['verdict'] for x in rs)} "
+              f"correct={sum(x['parses'] and 'correct' in x['verdict'] for x in rs)} "
+              f"did_not_parse={sum(not x['parses'] for x in rs)} "
               f"suite_green={sum(x['suite_green'] for x in rs)} "
               f"read_memory={sum(x['read_memory'] for x in rs)}")
 

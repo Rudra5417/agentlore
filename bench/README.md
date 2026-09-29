@@ -94,15 +94,21 @@ apart and the memory is the only signal that can.
 
 Latest run, fixture fixed, one model (`gpt-4o-mini`), 6 runs per arm:
 
-| configuration | runs | finished | valid | chose correct | chose the trap |
+| configuration | runs | finished | file parses | chose correct | chose the trap |
 |---|---|---|---|---|---|
 | no memory (arm B) | 6 | 6 | 6 | 6 | 0 |
-| memory injected (arm A) | 6 | 3 | 3 | 3 | 0 |
+| memory injected (arm A) | 6 | 3 | 4 | 4 | 0 |
 
-**No difference in what was built.** Including arm A's three unfinished runs — which had also
-written the correct approach by the time they ran out of steps — **12 of 12 runs keyed on
-`request_id`**, and the trap was never chosen with or without the memory. The memory changed
-nothing that this fixture can see.
+**No difference in what was built.** Every run in both arms that produced a file that loads
+keyed on `request_id` — 10 of 12 — and arm A's two remaining runs, which wrote files that do not
+parse (a docstring missing its closing quotes), were textually aiming at the same key. **The trap
+was never chosen, with or without the memory.** The memory changed nothing that this fixture can
+see.
+
+Note the three separate measures, because they are not the same and conflating them is how a null
+becomes a finding: **finished** (did the agent stop on its own), **parses** (is the result usable),
+and **correct** (which key did it use). Arm A is 3 / 4 / 4 on those. Reporting only the first
+would understate it; reporting only the last would overstate it.
 
 The null is explained rather than mysterious: the correct answer is derivable from the repo —
 `request_id` is a parameter of the very function being edited — so a capable model solves it
@@ -110,9 +116,9 @@ unaided, and the memory can only confirm what the code already said. The honest 
 *this experiment cannot tell us whether memory helps*, which is not the same as *memory does not
 help*.
 
-The only between-arm difference is completion (3 of 6 vs 6 of 6), and it is **not** a memory
-effect: arm A's unfinished runs are the model emitting a file that does not parse — a docstring
-missing its closing quotes — and then re-running the failing tests instead of repairing it. The
+The one between-arm difference is **file quality** (2 of 6 arm A runs produced a file that does
+not load, vs 0 of 6 in arm B), and it is **not** a memory effect: those runs are the model
+emitting a broken docstring and then re-running the failing tests instead of repairing it. The
 harness parser was verified faithful (escaped triple-quotes round-trip exactly), so this is model
 competence, and at n=6 it is not a significant difference. It does say something useful about
 method: **with a small model, run-to-run variance in code-generation correctness can be larger
