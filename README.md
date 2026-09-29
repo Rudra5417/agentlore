@@ -13,6 +13,10 @@ a **diff in the pull request that motivated them**. Teammates review memory like
 > truncation limits that silently drop the end of the file, and the one-command check that
 > tells you whether the memory arrived at all. A gate that runs is not automatically a gate
 > that works.
+>
+> **Does it actually help an agent?** Unproven. [bench/](bench/README.md) holds the harness and
+> the method, so you can re-run the measurement instead of taking our word for it — including
+> the honest null and an explanation of why that fixture could not detect an effect.
 
 ## Three rules the design is built on
 

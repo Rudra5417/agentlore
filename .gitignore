@@ -8,3 +8,8 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# The benchmark's scratch: per-run arm copies and transcripts. Not results --
+# results worth keeping belong in bench/README.md, which is reviewed.
+bench/runs/
+bench/logs/

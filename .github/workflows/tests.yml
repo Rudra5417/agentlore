@@ -1,11 +1,15 @@
 name: tests
 
-# Three jobs, because they answer different questions:
+# Four jobs, because they answer different questions:
 #   tests  -- does rmem behave the way it claims?
 #   example -- does the shipped example pass its own memory gate in CI, the way a
 #              real repo would? This is the tool used on itself.
 #   action -- does the action work the way a consumer will use it, in BOTH directions?
 #             A gate nobody has watched fail is decoration.
+#   bench  -- are the two arms of the behaviour benchmark still identical apart from
+#             the memory? No model calls, so it is free. Without this, an edit to the
+#             fixture or the seeder could make the arms differ by something else and
+#             every number the benchmark produces would measure the wrong variable.
 on:
   push:
     branches: [main]
@@ -51,6 +55,18 @@ jobs:
         run: |
           python3 tools/rmem compile
           git diff --exit-code AGENTS.md
+
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Syntax check the harness
+        run: python3 -m py_compile bench/harness.py bench/run_trial.py
+      - name: Build both arms and assert they differ only by the memory
+        run: python3 bench/run_trial.py --dry-run
 
   # The action is what strangers actually consume, so it is exercised the way a consumer
   # uses it: `uses: ./` resolves this repo's action.yml at the root, with no vendored copy.

@@ -1,0 +1,1 @@
+Refunds are not idempotent: if a client retries a refund request the customer gets refunded twice. Make a retried refund return the first result instead of refunding again. The existing tests must keep passing, and add a test covering the retry case.

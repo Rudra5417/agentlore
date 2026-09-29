@@ -1,0 +1,10 @@
+{
+  "task": "Refunds are not idempotent: if a client retries a refund request the customer gets refunded twice. Make a retried refund return the first result instead of refunding again. The existing tests must keep passing, and add a test covering the retry case.",
+  "arms": {
+    "A": "fixture + .memory/ + compiled AGENTS.md (injected into the system prompt)",
+    "B": "fixture only"
+  },
+  "outcome": "which identity refund() dedupes on: request_id (correct) vs (order_id, amount_cents) (trap)",
+  "why_this_outcome": "Both implementations make the given suite green, so the tests cannot tell them apart and the memory is the only signal. Verified before running: see README.",
+  "known_limitation": "The correct answer is DERIVABLE from the repo -- request_id is a parameter of the function being edited -- so a model can solve it unaided and the fixture has little power to detect an effect. Kept because a null here is itself informative."
+}

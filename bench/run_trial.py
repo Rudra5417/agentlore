@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Run the memory benchmark: N runs per arm, one model, one task, one containment.
+
+Arm A = the fixture plus `.memory/` and a compiled `AGENTS.md`.
+Arm B = the fixture only. Byte-identical otherwise; `--dry-run` proves it.
+
+Two things this runner refuses to do, both learned the hard way:
+
+  * **Count a run that did not finish.** A crashed run leaves the fixture unmodified, the
+    classifier then reads pristine code, and the result is scored as a behavioural failure of
+    that arm. That looks exactly like a real finding. Such runs are EXCLUDED and listed.
+  * **Let a shell glob decide whether the experiment happens.** Cleanup runs in Python: the
+    same cleanup written as `rm -f logs/B*.log && python3 run_trial.py` aborted the entire
+    command line under zsh when the glob had no match, so the trial silently never ran and the
+    previous run's results were read back as if they were new.
+
+Usage:
+  python3 bench/run_trial.py --runs 6 --dry-run         # build arms, no model calls
+  BENCH_URL=... BENCH_MODEL=... python3 bench/run_trial.py --runs 6
+"""
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent
+FIXTURE = HERE / "fixtures" / "idempotent-refund"
+RUNS = HERE / "runs"
+LOGS = HERE / "logs"
+HARNESS = HERE / "harness.py"
+
+
+def build_arm(arm: str, dest: Path) -> None:
+    """Materialise one arm. The ONLY difference between arms is the memory."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(FIXTURE / "fixture", dest,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+
+    # no git history in either arm: a commit message would identify the memory arm, and
+    # history would otherwise be an oracle that only one arm has
+    shutil.rmtree(dest / ".git", ignore_errors=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dest, check=False)
+    subprocess.run(["git", "config", "user.email", "bench@example.invalid"], cwd=dest, check=False)
+    subprocess.run(["git", "config", "user.name", "bench"], cwd=dest, check=False)
+    subprocess.run(["git", "add", "-A"], cwd=dest, check=False)
+    subprocess.run(["git", "commit", "-qm", "fixture"], cwd=dest, check=False)
+
+    if arm != "A":
+        return
+
+    mem = json.loads((FIXTURE / "memory.json").read_text())
+    rmem = str(REPO / "rmem")
+    for cmd in (
+        [rmem, "init"],
+        [rmem, "add", "--type", mem["type"], "--title", mem["title"], "--body", mem["body"],
+         "--anchor", mem["anchor"], "--evidence", mem["evidence"], "--author", mem["author"]],
+        [rmem, "index"],
+        [rmem, "compile"],
+    ):
+        r = subprocess.run(cmd, cwd=dest, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit(f"seeding arm A failed: {' '.join(cmd)}\n{r.stdout}{r.stderr}")
+
+
+def classify(src: str) -> str:
+    """Which identity does the dedupe key on? The whole experiment is this call.
+
+    Check this against two hand-written implementations -- one correct, one the trap --
+    BEFORE trusting a run of it. A classifier that cannot tell them apart reports
+    'no difference' and looks like a finding.
+    """
+    body = src.split("def refunded_total")[0]
+    m = re.search(r"def refund\(.*?(?=\ndef |\Z)", body, re.S)
+    fn = m.group(0) if m else body
+    keyed_req = bool(re.search(r"request_id[^\n]{0,40}(==|in )", fn)
+                     or re.search(r"(==|in )[^\n]{0,40}request_id", fn))
+    keyed_pair = bool(re.search(r"amount_cents[^\n]{0,80}(==|in )", fn)
+                      or re.search(r"(==|in )[^\n]{0,80}amount_cents", fn))
+    if keyed_req and not keyed_pair:
+        return "KEYED ON request_id  (correct)"
+    if keyed_pair and not keyed_req:
+        return "KEYED ON (order, amount)  (the trap)"
+    if keyed_req and keyed_pair:
+        return "BOTH compared (inspect)"
+    return "NO dedupe / other (inspect)"
+
+
+def run_one(arm: str, n: int, task: str) -> dict:
+    d = RUNS / f"{arm}{n}"
+    build_arm(arm, d)
+
+    log, out = LOGS / f"{arm}{n}.log", LOGS / f"{arm}{n}.json"
+    env = dict(os.environ)
+    with log.open("w") as fh:
+        subprocess.run([sys.executable, str(HARNESS), "--dir", str(d), "--task", task,
+                        "--max-steps", "14", "--out", str(out)],
+                       stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=3600)
+
+    # measured by US, not reported by the agent: the model's summary is not evidence
+    r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                       cwd=d, capture_output=True, text=True, timeout=180)
+    data = json.loads(out.read_text()) if out.exists() else {}
+    steps = data.get("steps", [])
+    looked = [s for s in steps if s.get("tool") == "read_file"
+              and (".memory" in str(s.get("args", {}).get("path", ""))
+                   or "AGENTS.md" in str(s.get("args", {}).get("path", "")))]
+
+    src = d / "src" / "refund.py"
+    pristine = (FIXTURE / "fixture" / "src" / "refund.py").read_text()
+    changed = bool(src.exists()) and src.read_text() != pristine
+    return {
+        "run": f"{arm}{n}", "arm": arm,
+        "valid": bool(data.get("finished", False)) and changed,
+        "body_changed": changed,
+        "suite_green": r.returncode == 0,
+        "steps": len(steps), "finished": data.get("finished", False),
+        "models": data.get("served_models", []),
+        "read_memory": len(looked) > 0,
+        "refund_src": src.read_text() if src.exists() else "",
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--runs", type=int, default=6, help="runs per arm")
+    ap.add_argument("--arms", default="A,B")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="build both arms and verify they differ only by memory; no model calls")
+    a = ap.parse_args()
+
+    task = (FIXTURE / "task.txt").read_text().strip()
+    arms = [x.strip().upper() for x in a.arms.split(",") if x.strip()]
+
+    if a.dry_run:
+        for arm in arms:
+            build_arm(arm, RUNS / f"dry{arm}")
+        b = RUNS / "dryB"
+        # Derived and VCS artifacts are not part of the treatment.
+        ignorable = lambda r: (str(r).startswith(".git/") or str(r) == ".memory/index.db"
+                               or "__pycache__" in str(r) or str(r).endswith(".pyc"))
+        only = [str(p.relative_to(RUNS / "dryA"))
+                for p in sorted((RUNS / "dryA").rglob("*"))
+                if p.is_file() and not ignorable(p.relative_to(RUNS / "dryA"))
+                and not (b / p.relative_to(RUNS / "dryA")).exists()]
+        print("arm A extra files (must be memory only):")
+        for o in only:
+            print("  ", o)
+        # An ASSERTION, not a print: if the arms differ by anything other than the memory,
+        # the comparison measures the wrong variable and every number from it is worthless.
+        unexpected = [o for o in only
+                      if not (o.startswith(".memory/") or o == "AGENTS.md" or o == ".gitignore")]
+        if unexpected:
+            raise SystemExit("DRY RUN FAILED: arms differ by something other than memory: %s"
+                             % unexpected)
+        changed = [str(p.relative_to(RUNS / "dryA"))
+                   for p in sorted((RUNS / "dryA").rglob("*"))
+                   if p.is_file() and not ignorable(p.relative_to(RUNS / "dryA"))
+                   and (b / p.relative_to(RUNS / "dryA")).exists()
+                   and p.read_bytes() != (b / p.relative_to(RUNS / "dryA")).read_bytes()]
+        if changed:
+            raise SystemExit("DRY RUN FAILED: shared files differ between arms: %s" % changed)
+        print("  OK: arms are identical apart from the memory")
+        r = subprocess.run([sys.executable, str(REPO / "rmem"), "check", "--brief"],
+                           cwd=RUNS / "dryA", capture_output=True, text=True)
+        print("arm A gate:", (r.stdout + r.stderr).strip())
+        return
+
+    RUNS.mkdir(exist_ok=True)
+    LOGS.mkdir(exist_ok=True)
+    for old in list(LOGS.glob("*.log")) + list(LOGS.glob("*.json")):
+        old.unlink()
+    print(f"cleared stale artifacts; running {len(arms)} arms x {a.runs} runs")
+
+    results = []
+    for arm in arms:
+        for n in range(1, a.runs + 1):
+            r = run_one(arm, n, task)
+            r["verdict"] = classify(r["refund_src"])
+            results.append(r)
+            print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
+                  f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}",
+                  flush=True)
+
+    (LOGS / "results.json").write_text(json.dumps(results, indent=2))
+    print("\n=== SUMMARY (invalid runs excluded and listed, never silently dropped) ===")
+    for r in results:
+        if not r["valid"]:
+            print(f"  EXCLUDED {r['run']}: finished={r['finished']} body_changed={r['body_changed']}")
+    for arm, label in (("A", "WITH memory"), ("B", "no memory")):
+        rs = [x for x in results if x["arm"] == arm and x["valid"]]
+        inv = sum(1 for x in results if x["arm"] == arm and not x["valid"])
+        if not rs:
+            print(f"  {label:12} no valid runs ({inv} invalid)")
+            continue
+        print(f"  {label:12} valid_n={len(rs)} invalid={inv} "
+              f"trap={sum('trap' in x['verdict'] for x in rs)} "
+              f"correct={sum('correct' in x['verdict'] for x in rs)} "
+              f"suite_green={sum(x['suite_green'] for x in rs)} "
+              f"read_memory={sum(x['read_memory'] for x in rs)}")
+
+
+if __name__ == "__main__":
+    main()
