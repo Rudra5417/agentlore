@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -172,6 +172,28 @@ def parse_file(path):
 
 def load_all():
     return [e for name in SOURCES for e in parse_file(MEM / name)]
+
+
+def new_entry_id(mtype):
+    """A fresh entry id, never one already in use.
+
+    The suffix is 4 random hex chars (16 bits), so collisions are rare but real -- one
+    collided in CI on a two-entry fixture and failed `ids-unique`. Rare is not safe: a
+    duplicate id makes verify/supersede/retract ambiguous, which for this tool is worse than
+    an ugly id. Regenerate on collision, then widen rather than loop forever.
+    """
+    taken = set()
+    try:
+        taken = {e["id"] for e in load_all()}
+    except Exception:
+        pass
+    for attempt in range(10):
+        width = 4 if attempt < 5 else 8
+        eid = "%s-%s-%s" % (PREFIX[mtype], date.today().isoformat(),
+                            uuid.uuid4().hex[:width])
+        if eid not in taken:
+            return eid
+    raise SystemExit("could not generate a unique id after 10 attempts")
 
 
 def source_hash():
@@ -497,7 +519,7 @@ def cmd_add(args):
     path = MEM / fname
     if not path.exists():
         path.write_text("# %s\n" % HEADING[args.type])
-    eid = "%s-%s-%s" % (PREFIX[args.type], date.today().isoformat(), uuid.uuid4().hex[:4])
+    eid = new_entry_id(args.type)
     verified = head_rev() or ""
     lines = [
         "",

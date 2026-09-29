@@ -1033,3 +1033,57 @@ class TestShippedArtifactsStayInSync(Base):
         for c in copies:
             self.assertEqual(c.read_bytes(), root.read_bytes(),
                              f"{c.relative_to(self.repo)} differs from rmem; re-copy it")
+
+
+class TestIdGeneration(Base):
+    """An id must never collide with one already in use.
+
+    Rare is not the same as safe. A 4-hex suffix is 16 bits, and one collision failed the
+    `ids-unique` check in CI on a two-entry fixture -- a flaky gate, which is the worst kind
+    for a tool whose value is being trusted. A duplicate id is also worse than an ugly one:
+    it makes verify / supersede / retract ambiguous.
+
+    These tests FAIL on the old generator (verified by running them against it) and pass on
+    the fixed one. The first version of this test did not: it seeded a taken id carrying a
+    hardcoded date while the generator stamps today's, so no collision was ever forced and
+    both versions passed. A test for collision handling that cannot collide is decoration.
+    """
+
+    def _mod(self, hexval):
+        """Load `rmem` in-process with uuid pinned, so the collision is deterministic."""
+        import types
+        src = (Path(__file__).resolve().parent.parent / "rmem").read_text()
+        mod = types.ModuleType("rmem_under_test")
+        exec(compile(src, "rmem", "exec"), mod.__dict__)
+
+        class FixedUuid:
+            def uuid4(self):
+                return type("U", (), {"hex": hexval})()
+
+        mod.uuid = FixedUuid()
+        return mod
+
+    def test_a_taken_id_is_never_reused(self):
+        mod = self._mod("aaaa111122223333")
+        mod.load_all = lambda: []
+        first = mod.new_entry_id("decision")       # a real id, stamped with today's date
+        mod.load_all = lambda: [{"id": first}]     # ...now taken
+        again = mod.new_entry_id("decision")       # same pinned uuid: this WOULD collide
+        self.assertNotEqual(again, first,
+                            "a colliding id was reused instead of regenerated")
+
+    def test_the_retry_widens_rather_than_looping_forever(self):
+        """With one uuid value pinned, every 4-hex attempt collides; the generator must widen."""
+        mod = self._mod("aaaa111122223333")
+        first = mod.new_entry_id("decision")
+        mod.load_all = lambda: [{"id": first}]
+        again = mod.new_entry_id("decision")
+        self.assertNotEqual(again, first)
+        self.assertTrue(len(again) > len(first),
+                        "expected a wider suffix, got %s vs %s" % (again, first))
+
+    def test_a_free_id_is_used_as_is(self):
+        mod = self._mod("beef1234567890ab")
+        mod.load_all = lambda: [{"id": "DEC-2026-01-01-0000"}]
+        got = mod.new_entry_id("decision")
+        self.assertTrue(got.endswith("beef"), got)

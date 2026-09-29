@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.5.0. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.5.1. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -385,7 +385,7 @@ read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 71 tests, ~24s, stdlib only
+python3 run_tests.py          # 74 tests, ~25s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
