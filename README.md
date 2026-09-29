@@ -8,6 +8,12 @@ facts worth keeping — decisions, dead ends, house rules — live in people's h
 `rmem` lets the agent write them into the repo, as normal files, so they show up as
 a **diff in the pull request that motivated them**. Teammates review memory like code.
 
+> **Start here if you are adopting this:** [INTEGRATION.md](INTEGRATION.md) covers how the
+> memory actually reaches an agent — which hosts read `AGENTS.md` and which need config, the
+> truncation limits that silently drop the end of the file, and the one-command check that
+> tells you whether the memory arrived at all. A gate that runs is not automatically a gate
+> that works.
+
 ## Three rules the design is built on
 
 1. **Markdown is the source of truth; the index is derived.** `.memory/*.md` is
