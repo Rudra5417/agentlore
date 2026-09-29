@@ -9,7 +9,7 @@ them:
 | stream | what it is | today |
 |---|---|---|
 | **`v1`** (major channel) | the **action interface** — the contract `uses: Rudra5417/rmem@v1` depends on. A moving tag, updated as the tool improves, exactly like `actions/checkout@v4`. | `v1` |
-| **`v0.x`** (product) | the **tool** — `rmem --version`, the CLI you run locally. | `0.7.1` |
+| **`v0.x`** (product) | the **tool** — `rmem --version`, the CLI you run locally. | `0.8.0` |
 
 `v1.0.0` and `v1.0.1` were tagged as if the product were 1.0. Development carried on at `0.x`,
 which is why they sit above later product releases in date order.
@@ -21,6 +21,29 @@ channel. The product reaches `1.0.0` when the honest-status table in the README 
 Notable entries are grouped by what they fixed, not by commit. Every release notes its evidence.
 
 ---
+
+## v0.8.0 — 2026-09-29 — a memory is an instruction, so the gate reads it as one
+
+`.memory/` is compiled into `AGENTS.md`, so an entry there is a persistent instruction to whatever
+agent reads it. New check `no-agent-directives`, plus a fail-open closed in the id generator.
+
+- `no-agent-directives` refuses memory that tells the agent to conceal something from the people
+  reviewing it, to ignore its instructions, to skip the gate, to handle credentials, or to weaken a
+  platform control. It is **not injection detection**: a memory *is* an instruction ("use httpx,
+  never requests" is the product working), so "sounds like an instruction" cannot be the rule.
+  Exempting one needs `--allow-directive "why"`, and an empty reason is refused.
+- `add` fails closed when the ids in use cannot be read, instead of carrying on with an empty set.
+  The quiet version hands out a duplicate id, which makes `verify`, `supersede` and `retract`
+  ambiguous. A guard that cannot read its own state has not guarded anything.
+- The suite no longer writes into the repo it is testing — it used to run `index` and `compile`
+  inside the shipped example, regenerating the tracked `AGENTS.md` it then asserted on. A failing
+  run now keeps its evidence (test names, hash seed, tool SHA, full output) in `.test-failures/`.
+
+The README became a product page with the depth moved into `docs/`, and gained an install section.
+`action.yml`'s description was 170 characters — past the Marketplace limit of 125 — and contained a
+`: ` that broke the YAML; a local test now enforces both.
+
+Evidence: 108 tests, 18 checks, CI green on 5 jobs plus the live gate.
 
 ## v0.7.1 — 2026-09-29 — a secret in the memory is delivered on purpose
 

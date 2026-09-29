@@ -15,7 +15,7 @@ them somewhere to live: typed markdown in `.memory/`, versioned with the code, c
 
 One file. Python standard library. No dependencies, no service, no account, nothing to configure.
 
-Current release **v0.7.1** · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
+Current release **v0.8.0** · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
 
 ---
 
@@ -100,7 +100,7 @@ organisations require this.
 
 ```bash
 mkdir -p tools
-curl -fsSL -o tools/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.7.1/rmem
+curl -fsSL -o tools/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.8.0/rmem
 chmod +x tools/rmem
 git add tools/rmem
 python3 tools/rmem check --brief          # runs with no install at all
@@ -116,9 +116,9 @@ Worth it if you want an agent to run `rmem` itself, or to check memories before 
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fsSL -o ~/.local/bin/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.7.1/rmem
+curl -fsSL -o ~/.local/bin/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.8.0/rmem
 chmod +x ~/.local/bin/rmem
-rmem --version                            # rmem 0.7.1
+rmem --version                            # rmem 0.8.0
 ```
 
 If `~/.local/bin` is not already on your `PATH`, add it (`export PATH="$HOME/.local/bin:$PATH"`).

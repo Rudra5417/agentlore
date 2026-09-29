@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.7.1"
+VERSION = "0.8.0"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
