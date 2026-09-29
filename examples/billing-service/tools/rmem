@@ -23,7 +23,11 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.4.2"
+VERSION = "0.5.0"
+
+# AGENTS.md is read by every agent in every session, so the compiled dead-end list is
+# bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
+COMPILE_DEAD_MAX = 12
 MEM = Path(".memory")
 INDEX = MEM / "index.db"
 SOURCES = ("decisions.md", "dead-ends.md", "conventions.md", "hazards.md")
@@ -180,6 +184,45 @@ def source_hash():
 
 
 # ------------------------------------------------------------------- anchors
+
+def _id_in_block(block, entry_id):
+    """True when this block is the entry with exactly this id.
+
+    Anchored, never a substring. The original substring test meant `verify 2026` matched
+    every memory created in 2026 -- and a re-stamp resets the staleness clock, so a loose
+    match would silently certify memories nobody named.
+    """
+    return re.search(r"(?m)^id:\s*%s\s*$" % re.escape(entry_id), block) is not None
+
+
+def resolve_id(needle, entries=None):
+    """Resolve a full id or an unambiguous prefix to exactly one id.
+
+    Returns (entry_id, candidates). entry_id is None both when nothing matched and when
+    more than one thing matched, and the caller must refuse in either case rather than
+    guess which memory the user meant.
+    """
+    entries = load_all() if entries is None else entries
+    ids = [e["id"] for e in entries]
+    if needle in ids:
+        return needle, []
+    hits = sorted(i for i in ids if i.startswith(needle))
+    if len(hits) == 1:
+        return hits[0], []
+    return None, hits
+
+
+def refuse_id(needle, candidates):
+    """One refusal for every verb, so no verb's failure mode is a guess."""
+    if candidates:
+        print("ambiguous id %r -- %d memories match:" % (needle, len(candidates)))
+        for c in candidates:
+            print("  %s" % c)
+        print("  pass a longer id. rmem will not guess which one you meant.")
+    else:
+        print("no memory with id %s" % needle)
+    return 1
+
 
 def anchor_matches(glob, path):
     g = glob.strip()
@@ -1062,10 +1105,34 @@ def cmd_recall(args):
 
 # ------------------------------------------------------------------- compile
 
+def _use_instead(body_text):
+    """Pull the actionable half out of a dead-end body: the convention it names.
+
+    Dead-end bodies end with the thing to do instead, because "we tried X" is only useful
+    to an agent if it also says what to do. Returns "" when the body names nothing.
+    """
+    flat = " ".join((body_text or "").split())
+    m = re.search(r"Use instead:\s*(.+?)(?:\.\s|$|\.$)", flat)
+    if m:
+        return "Use instead: %s" % m.group(1).strip().rstrip(".")
+    return ""
+
+
 def cmd_compile(args):
-    """Emit the always-on conventions into AGENTS.md (the file agents already read)."""
+    """Emit the always-on memory into AGENTS.md (the file agents already read).
+
+    Conventions, hazards, and live dead ends. Dead ends were left out at first, which
+    put the highest-value entry in the repo -- "we tried this and it was wrong" -- in a
+    file nothing pointed the agent at, so an agent could do a full task without ever
+    learning the team had already rejected the design it was about to write.
+    """
     entries = [e for e in load_all() if e["type"] == "convention" and e["status"] == "accepted"]
     hazards = [e for e in load_all() if e["type"] == "hazard" and e["status"] == "accepted"]
+    # Live only: a dead end that was settled or retired is history, not a warning, so
+    # compiling it would re-warn about a condition that no longer holds.
+    dead = [e for e in load_all()
+            if e["type"] == "dead-end" and e["status"] == "accepted"
+            and not (e.get("resolved_by") or "").strip()]
     agent = Path("AGENTS.md")
     body = ["<!-- rmem:begin (generated from .memory/ - do not edit) -->",
             "## House rules", ""]
@@ -1088,6 +1155,18 @@ def cmd_compile(args):
             who = (" -- owner: %s" % e["owner"]) if e.get("owner") else ""
             enf = ("; enforced by: %s" % e["enforcement"]) if e.get("enforcement") else ""
             body.append("- **%s**%s%s%s" % (e["title"], scope, who, enf))
+    if dead:
+        body += ["", "### Rejected approaches", "",
+                 "_Tried and rejected. Do not re-try these. The reason and the way out are "
+                 "recorded in `.memory/dead-ends.md`._", ""]
+        for e in dead[:COMPILE_DEAD_MAX]:
+            scope = (" `%s`" % ", ".join(e["anchors"])) if e["anchors"] else ""
+            body.append("- **%s**%s" % (e["title"], scope))
+            use = _use_instead(e["body"])
+            if use:
+                body.append("  %s" % use)
+        if len(dead) > COMPILE_DEAD_MAX:
+            body += ["", "_%d more in `.memory/dead-ends.md`._" % (len(dead) - COMPILE_DEAD_MAX)]
     body += ["", "<!-- rmem:end -->"]
     block = "\n".join(body)
     text = agent.read_text() if agent.exists() else "# AGENTS.md\n"
@@ -1096,7 +1175,8 @@ def cmd_compile(args):
     else:
         text = text.rstrip("\n") + "\n\n" + block + "\n"
     agent.write_text(text)
-    print("compiled %d conventions into AGENTS.md" % len(entries))
+    print("compiled %d conventions, %d hazards, %d dead ends into AGENTS.md"
+          % (len(entries), len(hazards), min(len(dead), COMPILE_DEAD_MAX)))
     return 0
 
 
@@ -1104,7 +1184,10 @@ def cmd_compile(args):
 
 def cmd_supersede(args):
     """Mark a memory superseded by a new one: the reason memories stop lying."""
-    target, new_id = args.old, args.new
+    target, candidates = resolve_id(args.old)
+    if target is None:
+        return refuse_id(args.old, candidates)
+    new_id = args.new
     for name in SOURCES:
         p = MEM / name
         if not p.exists():
@@ -1114,7 +1197,7 @@ def cmd_supersede(args):
         rebuilt = []
         for b in blocks:
             # scope the edit to the ONE entry with this id, never the file header
-            if b.startswith("## ") and ("id: " + target) in b:
+            if b.startswith("## ") and _id_in_block(b, target):
                 hit = True
                 if "status:" in b:
                     b = re.sub(r"(?m)^status:.*$", "status: superseded", b)
@@ -1152,6 +1235,9 @@ def cmd_retract(args):
               " wrong:%s" % (DIM, OFF))
         print("  %sthe next agent cannot tell whether it was retracted or lost.%s" % (DIM, OFF))
         return 1
+    rid, candidates = resolve_id(args.id)
+    if rid is None:
+        return refuse_id(args.id, candidates)
     for name in SOURCES:
         p = MEM / name
         if not p.exists():
@@ -1160,7 +1246,7 @@ def cmd_retract(args):
         rebuilt, hit = [], False
         for i, b in enumerate(blocks):
             # index 0 is the file header, never an entry
-            if i > 0 and b.startswith("## ") and ("id: " + args.id) in b:
+            if i > 0 and b.startswith("## ") and _id_in_block(b, rid):
                 hit = True
                 if "status:" in b:
                     b = re.sub(r"(?m)^status:.*$", "status: retracted", b)
@@ -1195,6 +1281,9 @@ def cmd_rm(args):
     The honest limit is printed every time: this rewrites the file, not history. In a
     shared repo the text is already in every clone, and `git log -p` still has it.
     """
+    rid, candidates = resolve_id(args.id)
+    if rid is None:
+        return refuse_id(args.id, candidates)
     for name in SOURCES:
         p = MEM / name
         if not p.exists():
@@ -1203,7 +1292,7 @@ def cmd_rm(args):
         keep, hit = [], False
         for i, b in enumerate(blocks):
             # only ever drop a real entry block; the file header is not a memory
-            if i > 0 and b.startswith("## ") and ("id: " + args.id) in b:
+            if i > 0 and b.startswith("## ") and _id_in_block(b, rid):
                 hit = True
                 continue
             keep.append(b)
@@ -1244,8 +1333,15 @@ def cmd_verify(args):
         print("not a git repo / no commits -- cannot stamp a revision")
         return 1
     entries = load_all()
-    ids = ([e["id"] for e in entries if e["status"] not in DEAD_STATUSES]
-           if args.all else list(args.ids))
+    if args.all:
+        ids = [e["id"] for e in entries if e["status"] not in DEAD_STATUSES]
+    else:
+        ids = []
+        for needle in args.ids:
+            rid, candidates = resolve_id(needle, entries)
+            if rid is None:
+                return refuse_id(needle, candidates)
+            ids.append(rid)
     if not ids:
         print("nothing to verify (pass ids, or --all)")
         return 1
@@ -1258,7 +1354,7 @@ def cmd_verify(args):
         blocks = re.split(r"(?m)(?=^##\s+)", text)
         rebuilt = []
         for b in blocks:
-            if b.startswith("## ") and any(("id: " + eid) in b for eid in ids):
+            if b.startswith("## ") and any(_id_in_block(b, eid) for eid in ids):
                 if "verified_at:" in b:
                     b = re.sub(r"(?m)^verified_at:.*$", "verified_at: " + rev, b)
                 else:

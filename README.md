@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.4.2. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.5.0. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -375,7 +375,7 @@ read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 64 tests, ~20s, stdlib only
+python3 run_tests.py          # 69 tests, ~24s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
@@ -410,6 +410,14 @@ It pins the invariants that caught real bugs:
   leaves a parseable file, and says out loud that history is untouched
 - **compile** — idempotent, preserves surrounding `AGENTS.md`, and hazards land as a Frozen
   areas section naming the control
+- **a live dead end reaches `AGENTS.md`** — a dead end that is not compiled into the file
+  agents actually read is a memory nothing delivers. Measured, not assumed: an agent trial
+  had the agent solve the task without ever opening `.memory/`. Settled dead ends are
+  excluded, because history is not a warning
+- **an id names exactly one memory** — matching is anchored and exact, and an ambiguous
+  prefix is refused rather than resolved. It was a substring test, so `verify 2026`
+  re-stamped every memory created in 2026, and a re-stamp resets the staleness clock: the
+  tool silently certified memories nobody had named
 - **a memory root that is not the git root is still checked** — git reports changed paths
   relative to the repo root while `.memory/` and anchors are relative to the working
   directory; without `--relative` the two never match, so `dead-ends-settled` matched nothing

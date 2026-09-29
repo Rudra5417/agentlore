@@ -907,3 +907,84 @@ class TestCliRobustness(Base):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestCompileCarriesDeadEnds(Base):
+    """AGENTS.md is the file agents actually read. A memory that is not in it is a memory
+    nothing delivers -- measured, not assumed: a full agent trial run had the agent solve
+    the task without ever opening .memory/, because nothing pointed it there."""
+
+    def _add_dead_end(self, title="Keying on (order, amount) swallows a refund"):
+        self.f.write("src/a.py", "x = 1\n")
+        self.f.commit("code")
+        code, out = self.f.rmem("add", "--type", "dead-end", "--title", title,
+                                "--body", "Tried and rejected. Use instead: request_id",
+                                "--anchor", "src/**", "--evidence", "prod #412",
+                                "--author", "t")
+        self.assertEqual(code, 0, out)
+        self.f.rmem("index")
+
+    def test_a_live_dead_end_reaches_agents_md(self):
+        self._add_dead_end()
+        code, out = self.f.rmem("compile")
+        self.assertEqual(code, 0, out)
+        agents = (self.f.dir / "AGENTS.md").read_text()
+        self.assertIn("Rejected approaches", agents)
+        self.assertIn("Keying on (order, amount) swallows a refund", agents)
+        # the actionable half, not just the warning
+        self.assertIn("Use instead: request_id", agents)
+
+    def test_a_settled_dead_end_is_history_and_is_not_compiled(self):
+        """Re-warning about a condition that no longer holds is a different bug."""
+        self._add_dead_end("Settled thing")
+        self.f.commit("record")
+        # a UNIQUE prefix is a feature; an ambiguous one is refused (see TestIdResolution)
+        mem = (self.f.dir / ".memory" / "dead-ends.md").read_text()
+        eid = mem.split("id: ")[1].split("\n")[0].strip()
+        code, out = self.f.rmem("verify", eid, "--resolved-by", "PR #1")
+        self.assertEqual(code, 0, out)
+        self.f.rmem("index")
+        self.f.rmem("compile")
+        agents = (self.f.dir / "AGENTS.md").read_text()
+        self.assertNotIn("Settled thing", agents)
+
+
+class TestIdResolution(Base):
+    """An id must name exactly one memory.
+
+    Matching was a substring test with no ambiguity check, so `verify 2026` re-stamped
+    every memory created in 2026 -- and a re-stamp resets the staleness clock, so a loose
+    match silently certified memories nobody named. That is the exact failure this tool
+    exists to prevent, committed by the tool.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.f.write("src/a.py", "x = 1\n")
+        self.f.write("src/b.py", "y = 1\n")
+        self.f.commit("code")
+        self.f.rmem("add", "--type", "decision", "--title", "A rule",
+                    "--anchor", "src/a.py", "--author", "t")
+        self.f.rmem("add", "--type", "decision", "--title", "B rule",
+                    "--anchor", "src/b.py", "--author", "t")
+        self.f.rmem("index")
+
+    def test_an_ambiguous_prefix_is_refused_and_touches_nothing(self):
+        code, out = self.f.rmem("verify", "DEC-", "--resolved-by", "PR #9")
+        self.assertEqual(code, 1, "an ambiguous prefix must fail closed:\n" + out)
+        self.assertIn("ambiguous", out.lower())
+        self.assertNotIn("PR #9", (self.f.dir / ".memory" / "decisions.md").read_text(),
+                         "an ambiguous id must not modify anything")
+
+    def test_a_unique_prefix_resolves(self):
+        mem = (self.f.dir / ".memory" / "decisions.md").read_text()
+        first = mem.split("id: ")[1].split("\n")[0].strip()
+        # a prefix longer than the shared date part is unique to one entry
+        code, out = self.f.rmem("verify", first[:-2], "--resolved-by", "PR #9")
+        self.assertEqual(code, 0, out)
+        self.assertIn(first, out + (self.f.dir / ".memory" / "decisions.md").read_text())
+
+    def test_an_unknown_id_refuses(self):
+        code, out = self.f.rmem("verify", "NOPE-123", "--resolved-by", "PR #1")
+        self.assertEqual(code, 1, out)
+        self.assertIn("no memory with id", out)
