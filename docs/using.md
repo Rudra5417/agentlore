@@ -86,5 +86,5 @@ never be seen. It also writes the MEMORY-HEALTH table into `$GITHUB_STEP_SUMMARY
 
 Verified on a real private repo: a PR that added a billing function without updating memory
 went red; re-verifying the memory in that same PR turned it green. (At the time the report
-read `9/10` — the tool has since grown checks 10 through 17 and now reads `17/17`.)
+read `9/10` — the tool has since grown checks 10 through 18 and now reads `18/18`.)
 

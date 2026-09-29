@@ -22,7 +22,7 @@
 
 ## MEMORY-HEALTH
 
-Seventeen checks. The value is not the score — it is that a failure **names the broken thing**.
+Eighteen checks. The value is not the score — it is that a failure **names the broken thing**.
 
 | check | catches |
 |---|---|
@@ -42,9 +42,20 @@ Seventeen checks. The value is not the score — it is that a failure **names th
 | **compile-current** | **`AGENTS.md` is not what `compile` would produce now — the memory is recorded but never delivered** |
 | **no-secrets** | **a key, token, or private key looks like it is recorded in `.memory/`** |
 | **no-pii** | **a payment card, SSN, phone number, or a bulk list of personal addresses** |
+| **no-agent-directives** | **a memory aimed at the agent's own process: concealment, bypassing the gate, credential handling, or weakening a control** |
 
 One softer signal is reported but never breaks the build: a **notice** when anchored files
 were only reformatted (bytes changed, meaning identical).
+
+`no-agent-directives` is deliberately narrow, and the reason is worth stating. A `.memory/`
+entry *is* an instruction — "use httpx, never requests" is the product working — so "this
+sounds like an instruction" cannot be the rule. It matches only directives aimed at the
+agent's own process, concealment, credentials, or a platform control: the cases where the
+legitimate reading is absent, or narrow enough to be worth a stated reason. A deliberate one
+is recorded with `--allow-directive "why"`, and an empty reason is refused, because nothing
+gets switched off anonymously. **It is not injection detection.** A skilled injection written
+to look like an ordinary house rule passes it, and the honest answer to that is not a cleverer
+regex — it is that memory rides a pull request, in a diff, in front of a reviewer.
 
 ## The accuracy gate
 

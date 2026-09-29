@@ -13,7 +13,7 @@ not.**
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored, and versioned in the repo | **proven** | 94 tests; the shipped example |
+| memory can be recorded, anchored, and versioned in the repo | **proven** | 108 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: `memory-health: failure`, two annotations, then `success` when the same PR resolved it |
 | an ambiguous id, or an unresolvable `--since`, **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `rmem verify 2026` exits 1 and changes nothing |
@@ -59,7 +59,7 @@ repo under test: experiment copies, the tool's README and its docs directory all
 ## Tests
 
 ```sh
-python3 run_tests.py          # 94 tests, ~35s, stdlib only
+python3 run_tests.py          # 108 tests, ~40s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp

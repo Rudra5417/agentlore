@@ -40,7 +40,7 @@ you measure is not the one you think. See [bench/README.md](bench/README.md).
 
 ## Changing a check
 
-`rmem check` runs 17 checks and prints `MEMORY-HEALTH: N/N GREEN`. If you add one:
+`rmem check` runs 18 checks and prints `MEMORY-HEALTH: N/N GREEN`. If you add one:
 
 1. Add the check, and make its failure message name the fix.
 2. Update the count assertion in `tests/test_rmem.py`.

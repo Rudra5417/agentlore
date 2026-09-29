@@ -32,15 +32,15 @@ $ rmem add --type dead-end \
     --anchor "src/billing/**" --evidence "PR #4821 - double charge"
 
 $ rmem check --since "$BASE_SHA"        # in CI: github.event.pull_request.base.sha
-MEMORY-HEALTH: 16/17 BROKEN  (1 memories, 0 stale, billing)
+MEMORY-HEALTH: 17/18 BROKEN  (1 memories, 0 stale, billing)
   ...
   FAIL dead-ends-settled  -- 1 unsettled
 
 dead ends that rode the change that settled them:
-  DEAD-2026-09-28-b563  The refund window rejects credit notes too
+  DEAD-2026-09-29-95f7  The refund window rejects credit notes too
     anchored to src/billing/**, changed in this same change: src/billing/gateway.py
     -> this memory now reads as a live warning about a condition your change removed.
-    -> state it: rmem verify DEAD-2026-09-28-b563 --resolved-by "<what settled it>"
+    -> state it: rmem verify DEAD-2026-09-29-95f7 --resolved-by "<what settled it>"
     -> or retype it as a decision and write the title about the CURRENT rule.
 
 2 finding(s) -> fix before merging
@@ -50,17 +50,17 @@ The agent's body hedged ("before the fix"); the **heading** did not — and the 
 thing the next agent reads. So the tool rewrites it rather than trusting the agent to:
 
 ```console
-$ rmem verify DEAD-2026-09-28-b563 --resolved-by "vendor supports credit notes as of v3.2"
-verified DEAD-2026-09-28-b563 @ ffd0889
+$ rmem verify DEAD-2026-09-29-95f7 --resolved-by "vendor supports credit notes as of v3.2"
+verified DEAD-2026-09-29-95f7 @ b5c646d
 
 $ grep '^## ' .memory/dead-ends.md
 ## The refund window rejects credit notes too (settled)
 
 $ rmem check --brief
-MEMORY-HEALTH: 16/17 BROKEN -- compile-current     # the file your agent reads is now stale
+MEMORY-HEALTH: 17/18 BROKEN -- compile-current     # the file your agent reads is now stale
 $ rmem compile
 $ rmem check --brief
-MEMORY-HEALTH: 17/17 GREEN
+MEMORY-HEALTH: 18/18 GREEN
 ```
 
 Three states, three honest outputs: the memory stopped being true, the record was corrected, and
@@ -129,7 +129,7 @@ depends on its location, and it runs from any working directory.
 
 ```console
 $ rmem init && rmem check --brief
-MEMORY-HEALTH: 17/17 GREEN
+MEMORY-HEALTH: 18/18 GREEN
 ```
 
 An empty `.memory/` is green on purpose: there is nothing to be wrong about yet.
@@ -169,7 +169,7 @@ touched, and a silent check is a disabled check.
 
 ## What the gate catches
 
-Seventeen checks. A failure names the broken thing and the fix, and prints on the line of the memory
+Eighteen checks. A failure names the broken thing and the fix, and prints on the line of the memory
 that is wrong.
 
 | check | catches |
@@ -187,10 +187,11 @@ that is wrong.
 | **`claims-agree`** | **two live memories claiming different things about the same key** |
 | **`compile-current`** | **`AGENTS.md` is not what `compile` would produce — recorded but never delivered** |
 | **`no-secrets`** / **`no-pii`** | **a key, token or private key; a payment card, SSN, or bulk list of personal addresses** |
+| **`no-agent-directives`** | **a memory telling the agent to conceal something, skip the gate, handle credentials, or weaken a control** |
 
 One softer signal is reported but never breaks the build: a **notice** when anchored files were only
 reformatted — bytes changed, meaning identical.
-[All seventeen, in detail →](docs/design.md#memory-health)
+[All eighteen, in detail →](docs/design.md#memory-health)
 
 ## Honest status
 
@@ -199,7 +200,7 @@ Nothing here asks you to believe a claim that is not on this table.
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored and versioned in the repo | **proven** | 94 tests; the shipped example |
+| memory can be recorded, anchored and versioned in the repo | **proven** | 108 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: two annotations, then `success` once the same PR resolved it |
 | an ambiguous id or an unresolvable `--since` **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary` |
@@ -247,7 +248,7 @@ None checks whether it is *true*.
 | [bench/](bench/README.md) | The efficacy harness, the method, and the null. Re-run it against your repo. |
 
 ```bash
-python3 run_tests.py       # 94 tests, ~35s, stdlib only — same as the tool
+python3 run_tests.py       # 108 tests, ~40s, stdlib only — same as the tool
 ```
 
 CI runs the suite on Python 3.9 and 3.12, then puts the shipped example through its own memory gate

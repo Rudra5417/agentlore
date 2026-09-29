@@ -35,10 +35,19 @@ That makes a memory a **prompt-injection channel**: a `.memory/` entry that read
 previous instructions and …" is not a note, it is an attack — and it arrives through a pull
 request, which is a path a reviewer may treat as prose rather than as executable instruction.
 
-`rmem` does **not** currently defend against this. There is no signing, no provenance check, and
-no tamper-evidence: any contributor who can modify `.memory/` can change what every agent is told.
-Some hosts (Hermes, for one) scan context files for injection patterns and block matches — but
-that is the host's protection, not this tool's, and you should not rely on it.
+`rmem` defends against this in one narrow way, and not in the important one. The gate's
+`no-agent-directives` check refuses memory that tells the agent to conceal something from the
+people reviewing it, to ignore its instructions, to skip this gate, to handle credentials, or to
+weaken a platform control: directives with no legitimate reading in a repo memory, or none that
+survives being written down beside a reason (`--allow-directive`, which refuses an empty one).
+**It is not injection detection.** A memory *is* an instruction — "use httpx, never requests" is
+the product working — so "sounds like an instruction" cannot be the rule, and a skilled injection
+written to look like ordinary house rules passes it.
+
+What is still missing: there is no signing, no provenance check, and no tamper-evidence, so any
+contributor who can modify `.memory/` can change what every agent is told. Some hosts (Hermes, for
+one) scan context files for injection patterns and block matches — but that is the host's
+protection, not this tool's, and you should not rely on it.
 
 Treat `.memory/` with the same review standards as a workflow file or a CODEOWNERS entry, and
 protect it with branch rules and required reviewers. That is the current, honest answer; a

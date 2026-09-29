@@ -327,6 +327,49 @@ def mask_value(text):
     return text[:2] + "*" * min(len(text) - 2, 16)
 
 
+DIRECTIVE_PATTERNS = [
+    # A memory IS an instruction, so "this sounds like an instruction" cannot be the rule --
+    # that would flag the point of the file. These match a narrow slice with no legitimate
+    # reading, or a reading narrow enough to be worth a stated reason.
+    ("tells the agent to conceal something from the people reviewing it", re.compile(
+        r"(?i)\b(?:do not|don't|never)\s+(?:tell|mention|reveal|disclose|report)\b"
+        r"[^.]{0,40}?\b(?:the\s+)?(?:user|human|developer|reviewer|anyone|them)\b")),
+    ("tells the agent to hide something from the people reviewing it", re.compile(
+        r"(?i)\b(?:hide|conceal)\b[^.]{0,30}?\bfrom\s+(?:the\s+)?"
+        r"(?:user|human|developer|reviewer)\b")),
+    ("tells the agent to ignore its instructions", re.compile(
+        r"(?i)\b(?:ignore|disregard|forget|override)\b[^.]{0,30}?"
+        r"\b(?:previous|prior|earlier|above|system)\b[^.]{0,20}?\b(?:instruction|prompt|rule|message)s?\b")),
+    ("tells the agent to bypass this gate", re.compile(
+        r"(?i)\b(?:skip|bypass|disable|ignore|avoid)\b[^.]{0,30}?"
+        r"\b(?:memory-health|memory health|rmem check|the gate|this check|these checks)\b")),
+    ("instructs the agent about credential handling", re.compile(
+        r"(?i)\b(?:read|use|print|echo|export|send|upload|post|curl)\b[^.]{0,30}?"
+        r"\b(?:the\s+)?(?:credential|api[ _-]?key|token|password|secret|private key)\b")),
+    ("tells the agent to weaken a platform control", re.compile(
+        r"(?i)\b(?:edit|modify|change|remove|delete|weaken|relax|disable)\b[^.]{0,40}?"
+        r"\b(?:codeowners|branch protection|required (?:review|check|status)|permissions?)\b")),
+]
+
+
+def scan_directives(text):
+    """Narrow, decidable slice: (kind, lineno, excerpt) for memory aimed at the agent itself.
+
+    This is NOT injection detection, and the distinction is the whole design. A `.memory/`
+    entry is supposed to be an instruction -- "use httpx, never requests" is the product
+    working. So the rule cannot be "looks like an instruction". It matches only directives
+    that target the agent's own process, concealment, credentials, or a platform control,
+    where the legitimate reading is absent or needs a stated reason. Everything subtler is
+    left to the reviewer, which is where it belongs.
+    """
+    out = []
+    for i, line in enumerate(text.splitlines(), 1):
+        for kind, rx in DIRECTIVE_PATTERNS:
+            for m in rx.finditer(line):
+                out.append((kind, i, m.group(0).strip()[:70]))
+    return out
+
+
 def scan_sensitive(text):
     """Findings, strongest first: (severity, kind, lineno, masked).
 
@@ -646,6 +689,9 @@ def cmd_add(args):
         print("  so the declaration has to carry its reason. Nothing gets switched off")
         print("  anonymously -- same rule as retract.")
         return 1
+    if args.allow_directive is not None and not args.allow_directive.strip():
+        print("--allow-directive needs a reason: nothing gets switched off anonymously.")
+        return 1
     MEM.mkdir(exist_ok=True)
     fname = FILES[args.type]
     path = MEM / fname
@@ -677,6 +723,8 @@ def cmd_add(args):
     if args.coexists_with:
         lines.append("coexists_with: %s" % " ".join(args.coexists_with))
         lines.append("coexists_why: %s" % args.coexists_why)
+    if args.allow_directive:
+        lines.append("directive_reviewed: %s" % args.allow_directive.strip())
     raw_fp, norm_fp = anchor_fingerprints({"anchors": args.anchor})
     lines += [
         "author: %s" % args.author,
@@ -1171,6 +1219,35 @@ def cmd_check(args):
     add("no-pii", not pii_hits,
         "possible personal data in .memory/: %s" % ", ".join(r[0] for r in pii_hits[:3]))
 
+    # `.memory/` is instructions to a machine that holds credentials, compiled into AGENTS.md
+    # where every session reads it. What can be decided is the narrow slice above; the rest is
+    # a review problem, and this tool's answer to that is that memory rides the PR.
+    # Scan the FILE, not a rebuilt entry: parse_file strips the metacomment fence and trims
+    # blank lines, so rebuilding "title + body" shifts every line number and the annotation
+    # lands in the wrong place. A hit is attributed to the entry whose block contains it, so a
+    # stated exemption is honoured at the entry it was recorded on.
+    directive_hits = []
+    for mf in sorted(MEM.glob("*.md")):
+        hits = scan_directives(mf.read_text())
+        if not hits:
+            continue
+        blocks = sorted((e for e in entries if e.get("file") == mf.name),
+                        key=lambda e: int(e.get("lineno") or 0))
+        for kind, lineno, excerpt in hits:
+            owner = None
+            for i, b in enumerate(blocks):
+                start = int(b.get("lineno") or 0)
+                stop = (int(blocks[i + 1].get("lineno") or 0) - 1
+                        if i + 1 < len(blocks) else sys.maxsize)
+                if start <= lineno <= stop:
+                    owner = b
+                    break
+            if owner is not None and (owner.get("directive_reviewed") or "").strip():
+                continue
+            directive_hits.append(("%s:%s" % (mf.name, lineno), kind, excerpt))
+    add("no-agent-directives", not directive_hits,
+        "memory instructs the agent about its own process: %s" % ", ".join(r[0] for r in directive_hits[:3]))
+
     passed = sum(1 for _, ok, _ in checks if ok)
     total = len(checks)
     color = GREEN if passed == total else RED
@@ -1192,6 +1269,19 @@ def cmd_check(args):
                            "committed and delivered on purpose. Refer to it by name and keep the "
                            "value in .env or the secret manager." % (kind, masked),
             })
+
+    # Directives get their own wording: the secret message ("keep the value in .env") is the
+    # wrong advice for an instruction.
+    for where, kind, excerpt in directive_hits:
+        fname, _, lineno = where.partition(":")
+        findings.append({
+            "level": "error", "file": ".memory/" + fname, "line": lineno,
+            "title": "MEMORY-HEALTH: the memory instructs the agent about its own process",
+            "message": "This %s: %s -- and .memory/ is compiled into AGENTS.md, which every "
+                       "agent loads every session, so an instruction here changes how it "
+                       "behaves from then on. If it is deliberate, record why: re-add the "
+                       "entry with --allow-directive \"reason\"." % (kind, excerpt),
+        })
 
     if args.brief:
         bad = [n for n, ok, _ in checks if not ok]
@@ -1706,6 +1796,9 @@ def main(argv=None):
                         "(context-dependent facts); requires --coexists-why")
     s.add_argument("--coexists-why", default="",
                    help="why both of the contradictory claims are true")
+    s.add_argument("--allow-directive", default=None,
+                   help="record a directive this memory is allowed to contain, and why "
+                        "(required to exempt an entry from the no-agent-directives check)")
     s.add_argument("--resolved-by", default=None,
                    help="dead-end only: what settled it (commit/PR). Omit if it still holds.")
     s.add_argument("--owner", default="",
