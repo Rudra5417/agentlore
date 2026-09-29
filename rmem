@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -1511,7 +1511,7 @@ def main(argv=None):
                         "(context-dependent facts); requires --coexists-why")
     s.add_argument("--coexists-why", default="",
                    help="why both of the contradictory claims are true")
-    s.add_argument("--resolved-by", default="",
+    s.add_argument("--resolved-by", default=None,
                    help="dead-end only: what settled it (commit/PR). Omit if it still holds.")
     s.add_argument("--owner", default="",
                    help="hazard only: the team/role accountable for the frozen area")
@@ -1566,7 +1566,7 @@ def main(argv=None):
     s.add_argument("ids", nargs="*")
     s.add_argument("--all", action="store_true")
     s.add_argument("--anchor", action="append", default=[], help="also narrow/reset the scope")
-    s.add_argument("--resolved-by", default="",
+    s.add_argument("--resolved-by", default=None,
                    help="also record what settled this dead end")
     s.add_argument("--coexists-with", action="append", default=[],
                    help="declare that this memory and another live memory contradict each "
@@ -1581,6 +1581,21 @@ def main(argv=None):
     if not getattr(args, "func", None):
         p.print_help()
         return 0
+    # Fail closed on an empty --resolved-by.
+    #
+    # The flag exists to record WHY a memory was settled, and its help says to omit it if
+    # the memory still holds. An empty value is therefore a mistake -- typically an unset
+    # shell variable, as in --resolved-by "$PR_TITLE" -- and treating it as an omission
+    # silently re-stamps the staleness clock while the caller believes an audit trail was
+    # written. That is the same fail-open class as an ambiguous id or an unresolvable
+    # --since, and it is refused the same way.
+    _rb = getattr(args, "resolved_by", None)
+    if _rb is not None and not _rb.strip():
+        print("--resolved-by was given but is empty.")
+        print("  it records WHY a memory was settled, so an empty one leaves the change")
+        print("  with no audit trail. Omit the flag if the memory still holds, or state")
+        print("  what settled it: --resolved-by \"PR #123 removed the fallback\"")
+        return 1
     if hasattr(args, "author") and not args.author:
         args.author = _run(["git", "config", "user.name"]) or "unknown"
     try:

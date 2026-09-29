@@ -1133,3 +1133,53 @@ class TestCompileCurrent(Base):
         self._repo()
         self.f.write("AGENTS.md", "# AGENTS.md\n\nHand-written notes, no rmem block.\n")
         self.assertGreen()
+
+
+class TestResolvedByIsAuditable(Base):
+    """--resolved-by records WHY a memory was settled. An empty one must be refused.
+
+    Its help says to OMIT the flag if the memory still holds, so a value that is present but
+    blank is a mistake -- typically an unset shell variable, as in --resolved-by "$PR_TITLE".
+    Treating it as an omission silently re-stamps the staleness clock while the caller believes
+    an audit trail was written, which is the same fail-open class as an ambiguous id or an
+    unresolvable --since.
+    """
+
+    def _stale_dead_end(self):
+        self.f.write("src/a.py", "x = 1\n")
+        self.f.commit("code")
+        self.f.init()
+        did = self.f.add("--type", "dead-end", "--title", "Tried the 409 fallback",
+                         "--body", "It loops. Use instead: request_id",
+                         "--anchor", "src/**", "--evidence", "PR #1", "--author", "t")
+        self.f.commit("memory")
+        self.f.write("src/a.py", "x = 2\n")      # the anchored code moves
+        self.f.commit("code change")
+        return did
+
+    def test_an_empty_reason_is_refused_and_clears_nothing(self):
+        did = self._stale_dead_end()
+        self.assertFails("anchors-not-stale")
+        code, out = self.f.rmem("verify", did, "--resolved-by", "")
+        self.assertEqual(code, 1, "an empty --resolved-by must fail closed:\n" + out)
+        self.assertIn("empty", out)
+        # the important half: the flag was NOT cleared on the way out
+        self.assertFails("anchors-not-stale")
+
+    def test_a_whitespace_reason_is_refused(self):
+        did = self._stale_dead_end()
+        code, _ = self.f.rmem("verify", did, "--resolved-by", "   ")
+        self.assertEqual(code, 1)
+
+    def test_a_real_reason_is_recorded(self):
+        did = self._stale_dead_end()
+        code, _ = self.f.rmem("verify", did, "--resolved-by", "PR #12 removed the fallback")
+        self.assertEqual(code, 0)
+        self.assertIn("resolved_by: PR #12 removed the fallback",
+                      self.f.read(".memory/dead-ends.md"))
+
+    def test_omitting_the_flag_still_re_stamps(self):
+        did = self._stale_dead_end()
+        code, out = self.f.rmem("verify", did)
+        self.assertEqual(code, 0, out)
+        self.assertGreen()

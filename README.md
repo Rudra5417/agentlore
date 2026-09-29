@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.6.0. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.6.1. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
