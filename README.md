@@ -258,6 +258,29 @@ a reviewable diff, which is the real safeguard.
 
 ## Evidence: what testing actually showed
 
+### First, what is and is not established
+
+The distinction that matters: **the memory *mechanism* is proven, the memory's *benefit* is
+not.**
+
+| claim | status | evidence |
+|---|---|---|
+| memory can be recorded, anchored, and versioned in the repo | **proven** | 74 tests; the shipped example |
+| staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
+| the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: `memory-health: failure`, two annotations, then `success` when the same PR resolved it |
+| an ambiguous id, or an unresolvable `--since`, **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `rmem verify 2026` exits 1 and changes nothing |
+| decided contradictions are caught | **proven, narrowly** | shared claim key + divergent value only; prose-vs-prose is deliberately out of scope |
+| every host reads the compiled memory | **mixed** | [INTEGRATION.md](INTEGRATION.md): most do; Gemini CLI needs config; all have truncation caps that silently drop the tail |
+| **memory makes an agent do better work** | **unproven** | [bench/](bench/README.md): 12 v 12, no difference — and that fixture had no power to detect one |
+| works in a monorepo | **unproven** | no per-package scoping; the `--relative` bug proved silent failure in subfolders |
+| safe against a poisoned memory | **no** | `.memory/` is privileged input to a machine with credentials; no signing, no tamper-evidence, no secret scan on write |
+
+Nothing in this repo asks you to believe a claim that is not on that table. If a row says
+unproven, it is because the experiment has not been run or has come back null — not because the
+result was inconvenient.
+
+### The agent-write-path arms
+
 Identical repos, same task, fresh agents, no memory mentioned in the prompt.
 
 | | memory protocol in `AGENTS.md` | tool + `.memory/` | result |
