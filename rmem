@@ -179,14 +179,20 @@ def new_entry_id(mtype):
 
     The suffix is 4 random hex chars (16 bits), so collisions are rare but real -- one
     collided in CI on a two-entry fixture and failed `ids-unique`. Rare is not safe: a
-    duplicate id makes verify/supersede/retract ambiguous, which for this tool is worse than
-    an ugly id. Regenerate on collision, then widen rather than loop forever.
+    duplicate id makes verify/supersede/retract ambiguous, which for this tool is worse
+    than an ugly id. Regenerate on collision, then widen rather than loop forever.
+
+    Reading the ids in use is therefore not optional. If that read fails, uniqueness cannot
+    be promised, and continuing with an empty `taken` set is the quiet way to hand out an
+    id that already exists -- so this fails closed instead.
     """
-    taken = set()
     try:
         taken = {e["id"] for e in load_all()}
-    except Exception:
-        pass
+    except Exception as exc:
+        raise SystemExit(
+            "rmem: refusing to mint an id -- could not read the ids already in use (%s).\n"
+            "      A duplicate id would make verify/supersede/retract ambiguous, so this\n"
+            "      fails closed. Fix the unreadable memory file above, then retry." % exc)
     for attempt in range(10):
         width = 4 if attempt < 5 else 8
         eid = "%s-%s-%s" % (PREFIX[mtype], date.today().isoformat(),

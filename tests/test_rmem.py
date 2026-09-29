@@ -1110,6 +1110,24 @@ class TestIdGeneration(Base):
         got = mod.new_entry_id("decision")
         self.assertTrue(got.endswith("beef"), got)
 
+    def test_it_fails_closed_when_the_ids_in_use_cannot_be_read(self):
+        """If the existing ids cannot be read, uniqueness cannot be promised -- refuse.
+
+        The first version caught the exception and carried on with an empty `taken` set, which
+        is the quiet way to hand out an id that already exists. A duplicate id makes
+        verify/supersede/retract ambiguous, which is exactly the failure this function exists
+        to prevent, so proceeding with no knowledge is worse than stopping.
+        """
+        mod = self._mod("aaaa111122223333")
+
+        def unreadable():
+            raise ValueError("memory file is unreadable")
+
+        mod.load_all = unreadable
+        with self.assertRaises(SystemExit) as cm:
+            mod.new_entry_id("decision")
+        self.assertIn("could not read the ids already in use", str(cm.exception))
+
 
 class TestCompileCurrent(Base):
     """The block in AGENTS.md must be what `rmem compile` would produce right now.
