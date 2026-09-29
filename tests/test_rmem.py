@@ -1028,19 +1028,28 @@ class TestShippedArtifactsStayInSync(Base):
         return [d for d in sorted(ex.iterdir()) if (d / ".memory").is_dir()]
 
     def test_committed_agents_md_matches_compile(self):
-        """A stale AGENTS.md is a memory nothing delivers. Regenerate with rmem compile."""
+        """A stale AGENTS.md is a memory nothing delivers. Regenerate with rmem compile.
+
+        Runs against a COPY of the example. The first version ran index+compile inside the real
+        example directory, so it rewrote the tracked file it was asserting on. Measured: it did
+        still fail on a stale block -- but it regenerated the file as it went, leaving the repo
+        dirty and making the failure unreproducible on the next run, which is exactly the
+        signature that makes a real defect look like a flake. It also left a rewritten derived
+        index in the repo for the next run.
+        """
         examples = self._examples()
         self.assertTrue(examples, "no shipped examples found -- the test is not looking at anything")
-        for d in examples:
-            agents = d / "AGENTS.md"
-            before = agents.read_text()
-            subprocess.run([sys.executable, str(self.repo / "rmem"), "index"], cwd=d,
-                           capture_output=True, text=True)
-            r = subprocess.run([sys.executable, str(self.repo / "rmem"), "compile"], cwd=d,
-                               capture_output=True, text=True)
-            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-            self.assertEqual(agents.read_text(), before,
-                             f"{d.relative_to(self.repo)}/AGENTS.md is stale; run rmem compile")
+        with tempfile.TemporaryDirectory() as tmp:
+            for d in examples:
+                work = Path(tmp) / d.name
+                shutil.copytree(d, work)
+                committed = (d / "AGENTS.md").read_text()
+                for cmd in ("index", "compile"):
+                    r = subprocess.run([sys.executable, str(self.repo / "rmem"), cmd],
+                                       cwd=work, capture_output=True, text=True)
+                    self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+                self.assertEqual((work / "AGENTS.md").read_text(), committed,
+                                 f"{d.relative_to(self.repo)}/AGENTS.md is stale; run rmem compile")
 
     def test_vendored_tool_copies_match_the_root_tool(self):
         """A vendored copy that lags the shipped tool demonstrates a tool nobody ships.

@@ -13,3 +13,7 @@ __pycache__/
 # results worth keeping belong in bench/README.md, which is reviewed.
 bench/runs/
 bench/logs/
+
+# Captured failure output from run_tests.py. Evidence for a flaky failure, not a fixture:
+# never committed, but never silently discarded either.
+.test-failures/
