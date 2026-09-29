@@ -48,7 +48,10 @@ Each of these cost a real run before it went in the list:
 4. **A model that changes mid-run.** Escalation and fallback retries silently swap models.
 5. **A commit message that reveals the arm.**
 6. **An unchecked classifier.** Label two hand-written implementations — correct and trap —
-   before trusting a classifier that reports "no difference".
+   before trusting a classifier that reports "no difference". And never re-write the classifier
+   for a quick look: doing exactly that mid-analysis put every run in the trap column, because
+   the *correct* implementation's record dict also contains `amount_cents`. Reading the source
+   would not have caught it; running the verified classifier did.
 7. **Counting a run that crashed.** Unmodified code reads as a behavioural failure.
 8. **A fixture that resets only the state it knows about.** See below — this one nearly
    produced the finding that memory *harms* agents.
@@ -86,19 +89,34 @@ any arm, check that more than one reasonable correct implementation passes.
 
 Fixture: `idempotent-refund`. Task: make retried refunds idempotent. Outcome: does `refund()`
 dedupe on `request_id` (correct) or on `(order_id, amount_cents)` (the trap)? Both make the
-given suite green — verified before running — so the tests cannot tell them apart and the
-memory is the only signal.
+given suite green — checked automatically by `--dry-run` — so the visible tests cannot tell them
+apart and the memory is the only signal that can.
 
-| configuration | valid runs | trap | correct |
-|---|---|---|---|
-| no memory (arm B) | 12 | 0 | 12 |
-| with memory, no injection | 12 | 0 | 12 |
+Latest run, fixture fixed, one model (`gpt-4o-mini`), 6 runs per arm:
 
-**No difference, and the null is explained rather than mysterious:** the correct answer is
-derivable from the repo — `request_id` is a parameter of the very function being edited — so a
-capable model solves it unaided. The fixture therefore has little power to detect an effect,
-and the honest reading is *this experiment cannot tell us whether memory helps*, not *memory
-does not help*.
+| configuration | runs | finished | valid | chose correct | chose the trap |
+|---|---|---|---|---|---|
+| no memory (arm B) | 6 | 6 | 6 | 6 | 0 |
+| memory injected (arm A) | 6 | 3 | 3 | 3 | 0 |
+
+**No difference in what was built.** Including arm A's three unfinished runs — which had also
+written the correct approach by the time they ran out of steps — **12 of 12 runs keyed on
+`request_id`**, and the trap was never chosen with or without the memory. The memory changed
+nothing that this fixture can see.
+
+The null is explained rather than mysterious: the correct answer is derivable from the repo —
+`request_id` is a parameter of the very function being edited — so a capable model solves it
+unaided, and the memory can only confirm what the code already said. The honest reading is
+*this experiment cannot tell us whether memory helps*, which is not the same as *memory does not
+help*.
+
+The only between-arm difference is completion (3 of 6 vs 6 of 6), and it is **not** a memory
+effect: arm A's unfinished runs are the model emitting a file that does not parse — a docstring
+missing its closing quotes — and then re-running the failing tests instead of repairing it. The
+harness parser was verified faithful (escaped triple-quotes round-trip exactly), so this is model
+competence, and at n=6 it is not a significant difference. It does say something useful about
+method: **with a small model, run-to-run variance in code-generation correctness can be larger
+than the effect you are trying to measure.**
 
 What the experiment did establish, at full strength:
 
