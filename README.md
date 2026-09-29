@@ -68,19 +68,85 @@ then the *compiled* file your agent actually loads was caught lagging behind it.
 check most tools do not have — memory that is recorded but never delivered is invisible in every
 direction. [The accuracy gate, in full →](docs/design.md#the-accuracy-gate)
 
+## Install
+
+One 84 KB Python file with no dependencies, so there is nothing to install in the package-manager
+sense — you pick how much of it you want to own.
+
+**Requirements:** Python **3.9+** (CI runs 3.9 and 3.12) and `git`. That is the whole list: no
+`pip install`, no virtualenv, no lockfile, no build step. It is not on PyPI, deliberately — a single
+stdlib file has nothing to resolve, pin or audit beyond this repository.
+
+### 1. As a GitHub Action — nothing to install
+
+Usually the right answer, because the gate is the part that has to run on every PR:
+
+```yaml
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # only so an annotation can name the file that drifted
+      - uses: Rudra5417/rmem@v1
+        with:
+          since: ${{ github.event.pull_request.base.sha }}
+```
+
+GitHub fetches the tool for you. Nothing in your repo changes, and there is no version to track —
+`@v1` is a moving tag, so you get fixes without editing workflows.
+
+### 2. Vendored into your repo — self-contained, no third-party action
+
+The opposite trade: you own the file, so CI needs no network fetch and no action dependency. Some
+organisations require this.
+
+```bash
+mkdir -p tools
+curl -fsSL -o tools/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.7.1/rmem
+chmod +x tools/rmem
+git add tools/rmem
+python3 tools/rmem check --brief          # runs with no install at all
+```
+
+Pin the tag (as above) for reproducibility, or use `main` to track HEAD. Then wire it into a job the
+same way the action does it — see [docs/using.md](docs/using.md#ci-the-review-gate) for the three
+commands.
+
+### 3. On your PATH — for local use, and for an agent to call
+
+Worth it if you want an agent to run `rmem` itself, or to check memories before pushing:
+
+```bash
+mkdir -p ~/.local/bin
+curl -fsSL -o ~/.local/bin/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.7.1/rmem
+chmod +x ~/.local/bin/rmem
+rmem --version                            # rmem 0.7.1
+```
+
+If `~/.local/bin` is not already on your `PATH`, add it (`export PATH="$HOME/.local/bin:$PATH"`).
+Prefer `git clone`? The tool is just the file at the repo root — copy it wherever you like; nothing
+depends on its location, and it runs from any working directory.
+
+### Check it before you wire it in
+
+```console
+$ rmem init && rmem check --brief
+MEMORY-HEALTH: 17/17 GREEN
+```
+
+An empty `.memory/` is green on purpose: there is nothing to be wrong about yet.
+
 ## Quick start
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/Rudra5417/rmem/main/rmem && chmod +x rmem
-
-./rmem init        # 1. create .memory/, gitignore the derived index
+rmem init          # 1. create .memory/, gitignore the derived index
                    # 2. your agent (or you) records what it learns:
-./rmem add --type decision \
+rmem add --type decision \
     --title "Refunds close at 90 days" --body "Vendor contract; enforced in gateway.py." \
     --anchor 'src/billing/**' --evidence "PR #4821"
-./rmem compile     # 3. deliver it — writes a block into AGENTS.md
-./rmem check       #    exit 1 when a memory has stopped being true
+rmem compile       # 3. deliver it — writes a block into AGENTS.md
+rmem check         #    exit 1 when a memory has stopped being true
 ```
+
+(Using the vendored copy from option 2? Every command below is `python3 tools/rmem …` instead.)
 
 Commit the `.memory/*.md` and the `AGENTS.md` block. That is the whole model: the markdown is the
 source of truth, the index is derived, and the memory **rides the pull request** that motivated it,

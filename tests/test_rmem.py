@@ -903,6 +903,22 @@ class TestCliRobustness(Base):
         self.assertIn(version, out,
                       "README says v%s but the tool reports %r" % (version, out.strip()))
 
+    def test_pinned_install_urls_match_the_documented_version(self):
+        """The install commands pin a tag, which is a third place the version appears.
+
+        Unchecked, those rot silently and the README starts telling people to install an older
+        file than the one it documents.
+        """
+        readme = (TOOL.parent / "README.md").read_text()
+        pinned = set(re.findall(
+            r"raw\.githubusercontent\.com/Rudra5417/rmem/v(\d+\.\d+\.\d+)/", readme))
+        self.assertTrue(pinned, "expected at least one pinned install URL in the README")
+        m = re.search(r"Current release \*\*v(\d+\.\d+\.\d+)\*\*", readme)
+        self.assertIsNotNone(m, "README should state the current release as **vX.Y.Z**")
+        assert m is not None
+        self.assertEqual(pinned, {m.group(1)},
+                         "README pins %s but documents %s" % (sorted(pinned), m.group(1)))
+
     def test_piping_into_head_does_not_traceback(self):
         """`rmem list | head` is normal usage and must not dump a stack trace."""
         r = subprocess.run("python3 %s list | head -1" % TOOL, shell=True,
