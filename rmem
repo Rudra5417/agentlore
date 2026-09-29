@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.5.1"
+VERSION = "0.6.0"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -981,6 +981,23 @@ def cmd_check(args):
                                    % (start, cur, cur, end["status"])))
     add("supersedes-acyclic", not chain_problems, "%d broken chain(s)" % len(chain_problems))
 
+    # 15 the committed block is what compile would produce right now
+    #
+    # A memory that is not compiled into the file agents actually read is a memory nothing
+    # delivers, and the failure is silent from every direction: the gate goes green, the
+    # agent gets on with its work, and the entry simply never arrives. This check exists
+    # because that happened: a new entry type began being compiled, the committed AGENTS.md
+    # was never regenerated, and consumers ran on a stale file until CI caught it.
+    agent_md = Path("AGENTS.md")
+    if not agent_md.exists():
+        add("compile-current", True, "no AGENTS.md here (not compiled)")
+    elif "<!-- rmem:begin" not in agent_md.read_text():
+        add("compile-current", True, "AGENTS.md has no compiled block")
+    else:
+        committed = re.search(r"<!-- rmem:begin.*?<!-- rmem:end -->", agent_md.read_text(), re.S)
+        add("compile-current", bool(committed) and committed.group(0) == compile_block(),
+            "AGENTS.md is stale; run: rmem compile")
+
     passed = sum(1 for _, ok, _ in checks if ok)
     total = len(checks)
     color = GREEN if passed == total else RED
@@ -1140,13 +1157,16 @@ def _use_instead(body_text):
     return ""
 
 
-def cmd_compile(args):
-    """Emit the always-on memory into AGENTS.md (the file agents already read).
+def compile_block():
+    """The always-on memory, as the one block that lands in AGENTS.md.
 
     Conventions, hazards, and live dead ends. Dead ends were left out at first, which
     put the highest-value entry in the repo -- "we tried this and it was wrong" -- in a
     file nothing pointed the agent at, so an agent could do a full task without ever
     learning the team had already rejected the design it was about to write.
+
+    Kept separate from cmd_compile so the `compile-current` check can ask what compile
+    WOULD produce, without writing anything.
     """
     entries = [e for e in load_all() if e["type"] == "convention" and e["status"] == "accepted"]
     hazards = [e for e in load_all() if e["type"] == "hazard" and e["status"] == "accepted"]
@@ -1155,7 +1175,6 @@ def cmd_compile(args):
     dead = [e for e in load_all()
             if e["type"] == "dead-end" and e["status"] == "accepted"
             and not (e.get("resolved_by") or "").strip()]
-    agent = Path("AGENTS.md")
     body = ["<!-- rmem:begin (generated from .memory/ - do not edit) -->",
             "## House rules", ""]
     if not entries:
@@ -1190,15 +1209,26 @@ def cmd_compile(args):
         if len(dead) > COMPILE_DEAD_MAX:
             body += ["", "_%d more in `.memory/dead-ends.md`._" % (len(dead) - COMPILE_DEAD_MAX)]
     body += ["", "<!-- rmem:end -->"]
-    block = "\n".join(body)
+    return "\n".join(body)
+
+
+def cmd_compile(args):
+    """Write the compiled block into AGENTS.md, replacing any previous block in place."""
+    agent = Path("AGENTS.md")
+    block = compile_block()
     text = agent.read_text() if agent.exists() else "# AGENTS.md\n"
     if "<!-- rmem:begin" in text:
         text = re.sub(r"<!-- rmem:begin.*?<!-- rmem:end -->", block, text, flags=re.S)
     else:
         text = text.rstrip("\n") + "\n\n" + block + "\n"
     agent.write_text(text)
+    _all = load_all()
+    _conv = len([e for e in _all if e["type"] == "convention" and e["status"] == "accepted"])
+    _haz = len([e for e in _all if e["type"] == "hazard" and e["status"] == "accepted"])
+    _dead = len([e for e in _all if e["type"] == "dead-end" and e["status"] == "accepted"
+                 and not (e.get("resolved_by") or "").strip()])
     print("compiled %d conventions, %d hazards, %d dead ends into AGENTS.md"
-          % (len(entries), len(hazards), min(len(dead), COMPILE_DEAD_MAX)))
+          % (_conv, _haz, min(_dead, COMPILE_DEAD_MAX)))
     return 0
 
 

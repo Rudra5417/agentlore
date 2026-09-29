@@ -144,7 +144,7 @@ class Base(unittest.TestCase):
 class TestBaseline(Base):
     def test_fresh_repo_is_green(self):
         h = self.f.health()
-        self.assertEqual(h["total"], 14)
+        self.assertEqual(h["total"], 15)
         self.assertGreen(h)
 
     def test_unstamped_repo_fails_index_checks(self):
@@ -1087,3 +1087,49 @@ class TestIdGeneration(Base):
         mod.load_all = lambda: [{"id": "DEC-2026-01-01-0000"}]
         got = mod.new_entry_id("decision")
         self.assertTrue(got.endswith("beef"), got)
+
+
+class TestCompileCurrent(Base):
+    """The block in AGENTS.md must be what `rmem compile` would produce right now.
+
+    Uncompiled memory is memory nothing delivers, and every direction of that failure is
+    silent: the gate stays green, the agent carries on, and the entry never arrives. This is
+    not a hypothetical class -- a new entry type began being compiled, the committed AGENTS.md
+    was never regenerated, and consumers ran on a stale file until CI caught it.
+    """
+
+    def _repo(self):
+        self.f.write("src/a.py", "x = 1\n")
+        self.f.commit("code")
+        self.f.init()
+
+    def test_a_stale_agents_md_fails_the_check(self):
+        self._repo()
+        self.f.rmem("compile")
+        self.assertGreen()          # compiled and current: green
+        self.f.add("--type", "convention", "--title", "Pin the SDK",
+                   "--body", "Unpinned SDKs drift under us.",
+                   "--anchor", "src/**", "--author", "t")
+        self.f.rmem("index")
+        self.assertFails("compile-current")   # added but never compiled in: must fail
+
+    def test_recompiling_clears_it(self):
+        self._repo()
+        self.f.rmem("compile")
+        self.f.add("--type", "convention", "--title", "Pin the SDK",
+                   "--body", "Unpinned SDKs drift under us.",
+                   "--anchor", "src/**", "--author", "t")
+        self.f.rmem("index")
+        self.assertFails("compile-current")
+        self.f.rmem("compile")
+        self.assertGreen()
+
+    def test_a_repo_that_never_compiles_is_not_penalised(self):
+        """Not every repo compiles to AGENTS.md, and the check must not punish that."""
+        self._repo()
+        self.assertGreen()
+
+    def test_an_agents_md_without_the_block_is_not_penalised(self):
+        self._repo()
+        self.f.write("AGENTS.md", "# AGENTS.md\n\nHand-written notes, no rmem block.\n")
+        self.assertGreen()

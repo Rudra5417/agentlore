@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.5.1. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.6.0. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -76,6 +76,7 @@ Fourteen checks. The value is not the score — it is that a failure **names the
 | **hazards-enforced** | **a "do not touch" that no control actually enforces** |
 | **claims-agree** | **two live memories claiming different things about the same key** |
 | **supersedes-acyclic** | **a retirement chain that loops or lands on a retired memory** |
+| **compile-current** | **`AGENTS.md` is not what `compile` would produce now — the memory is recorded but never delivered** |
 
 One softer signal is reported but never breaks the build: a **notice** when anchored files
 were only reformatted (bytes changed, meaning identical).
@@ -403,7 +404,7 @@ never be seen. It also writes the MEMORY-HEALTH table into `$GITHUB_STEP_SUMMARY
 
 Verified on a real private repo: a PR that added a billing function without updating memory
 went red; re-verifying the memory in that same PR turned it green. (At the time the report
-read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/14`.)
+read `9/10` — the tool has since grown checks 10 through 15 and now reads `15/15`.)
 
 ## Tests
 
