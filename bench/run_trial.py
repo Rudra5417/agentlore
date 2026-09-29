@@ -126,6 +126,98 @@ def run_one(arm: str, n: int, task: str) -> dict:
     }
 
 
+REFERENCE_IMPLS = {
+    "correct: dedupe on request_id, scanning the ledger": (
+        '"""Refund handling for the billing service."""\n'
+        "from . import errors\n\n"
+        "LEDGER = []\n\n\n"
+        "def refund(order, amount_cents, request_id):\n"
+        "    for r in LEDGER:\n"
+        '        if r["request_id"] == request_id:\n'
+        "            return r\n"
+        '    record = {"order_id": order["id"], "amount_cents": amount_cents,\n'
+        '              "request_id": request_id}\n'
+        "    LEDGER.append(record)\n"
+        "    return record\n\n\n"
+        "def refunded_total(order_id):\n"
+        '    return sum(r["amount_cents"] for r in LEDGER if r["order_id"] == order_id)\n'
+    ),
+    "correct: dedupe on request_id, separate cache": (
+        '"""Refund handling for the billing service."""\n'
+        "from . import errors\n\n"
+        "LEDGER = []\n"
+        "PROCESSED = {}\n\n\n"
+        "def refund(order, amount_cents, request_id):\n"
+        "    if request_id in PROCESSED:\n"
+        "        return PROCESSED[request_id]\n"
+        '    record = {"order_id": order["id"], "amount_cents": amount_cents,\n'
+        '              "request_id": request_id}\n'
+        "    LEDGER.append(record)\n"
+        "    PROCESSED[request_id] = record\n"
+        "    return record\n\n\n"
+        "def refunded_total(order_id):\n"
+        '    return sum(r["amount_cents"] for r in LEDGER if r["order_id"] == order_id)\n'
+    ),
+    "trap: dedupe on (order, amount)": (
+        '"""Refund handling for the billing service."""\n'
+        "from . import errors\n\n"
+        "LEDGER = []\n\n\n"
+        "def refund(order, amount_cents, request_id):\n"
+        "    for r in LEDGER:\n"
+        '        if r["order_id"] == order["id"] and r["amount_cents"] == amount_cents:\n'
+        "            return r\n"
+        '    record = {"order_id": order["id"], "amount_cents": amount_cents,\n'
+        '              "request_id": request_id}\n'
+        "    LEDGER.append(record)\n"
+        "    return record\n\n\n"
+        "def refunded_total(order_id):\n"
+        '    return sum(r["amount_cents"] for r in LEDGER if r["order_id"] == order_id)\n'
+    ),
+}
+
+
+def check_fixture_validity():
+    """Is the fixture FAIR, and does it still have POWER?
+
+    Two properties, and the second is worthless without the first:
+
+      * fair   -- every reasonable CORRECT implementation passes. A fixture that resets only
+                  the state it knows about fails a correct solution for an incidental reason,
+                  and then reports the implementation style as a treatment effect. That is not
+                  hypothetical: it made the memory arm look actively harmful.
+      * power  -- the TRAP also passes, so the visible tests cannot tell the two apart and the
+                  memory is the only signal that can. And the untouched fixture must FAIL, or
+                  there is no task.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    def outcome(src_text, label):
+        d = Path(tempfile.mkdtemp())
+        try:
+            shutil.copytree(FIXTURE / "fixture", d, dirs_exist_ok=True)
+            if src_text is not None:
+                (d / "src" / "refund.py").write_text(src_text)
+            r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                               cwd=d, capture_output=True, text=True)
+            return r.returncode == 0
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    problems = []
+    if outcome(None, "untouched"):
+        problems.append("the untouched fixture already passes -- there is no task")
+    for label, src in REFERENCE_IMPLS.items():
+        if not outcome(src, label):
+            problems.append(f"a {label} implementation fails the suite -- the fixture is unfair")
+    if problems:
+        raise SystemExit("FIXTURE VALIDITY FAILED:\n  " + "\n  ".join(problems))
+    print("  OK: fixture is fair (all 3 correct/trap styles pass) and still has power")
+    print("      (the untouched fixture fails, and the trap passes, so the visible tests")
+    print("       genuinely cannot distinguish correct from trap)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=6, help="runs per arm")
@@ -166,6 +258,7 @@ def main():
         if changed:
             raise SystemExit("DRY RUN FAILED: shared files differ between arms: %s" % changed)
         print("  OK: arms are identical apart from the memory")
+        check_fixture_validity()
         r = subprocess.run([sys.executable, str(REPO / "rmem"), "check", "--brief"],
                            cwd=RUNS / "dryA", capture_output=True, text=True)
         print("arm A gate:", (r.stdout + r.stderr).strip())

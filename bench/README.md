@@ -50,6 +50,37 @@ Each of these cost a real run before it went in the list:
 6. **An unchecked classifier.** Label two hand-written implementations — correct and trap —
    before trusting a classifier that reports "no difference".
 7. **Counting a run that crashed.** Unmodified code reads as a behavioural failure.
+8. **A fixture that resets only the state it knows about.** See below — this one nearly
+   produced the finding that memory *harms* agents.
+9. **Changing two things between samples.** A later sample differed from the first in both
+   `max_tokens` and whether the memory was injected, so the two are not comparable at all.
+   One variable at a time, or the difference you measure is not the one you think.
+
+### A near-miss worth recording
+
+The first version of this fixture reset state by clearing `LEDGER` by name. The task is "make a
+retried refund idempotent", and keeping a separate cache keyed by `request_id` is a completely
+reasonable way to do that — but the cache survived `setUp`, so such a solution failed on a stale
+entry left by a *previous test* (`0 != 5000` from a record that should not have existed). The
+failure has nothing to do with idempotency.
+
+The consequence was not hypothetical. With the memory injected, the agent chose the cache style,
+watched tests fail, re-ran them, and burned its step budget in 5 runs of 6; without the memory it
+finished in 6–7 steps every time. Read at face value that is a clean result — *memory makes agents
+worse* — and it is entirely an artifact of the fixture.
+
+`setUp` now calls `importlib.reload(refund)`, which resets **all** module state and is agnostic to
+how a solution stores what it has already refunded. Verified against three implementations:
+
+| implementation | old fixture | fixed fixture |
+|---|---|---|
+| dedupe on `request_id`, scanning the ledger | green | green |
+| dedupe on `request_id`, separate cache | **RED** | green |
+| trap: dedupe on `(order, amount)` | green | green |
+
+The lesson generalises: a benchmark fixture must be indifferent to *how* a correct answer is
+implemented, or it will report the implementation style as a treatment effect. Before trusting
+any arm, check that more than one reasonable correct implementation passes.
 
 ## Results so far
 
