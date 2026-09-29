@@ -144,7 +144,7 @@ class Base(unittest.TestCase):
 class TestBaseline(Base):
     def test_fresh_repo_is_green(self):
         h = self.f.health()
-        self.assertEqual(h["total"], 15)
+        self.assertEqual(h["total"], 17)
         self.assertGreen(h)
 
     def test_unstamped_repo_fails_index_checks(self):
@@ -1181,5 +1181,123 @@ class TestResolvedByIsAuditable(Base):
     def test_omitting_the_flag_still_re_stamps(self):
         did = self._stale_dead_end()
         code, out = self.f.rmem("verify", did)
+        self.assertEqual(code, 0, out)
+        self.assertGreen()
+
+
+# Assembled from pieces so that no recognisable credential literal lives in this repository.
+# The pre-push scanner blocks a push containing one -- that is the guard working, not a false
+# positive to be silenced with an allowlist.
+FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+FAKE_GITHUB_TOKEN = "ghp_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+
+class TestSensitiveData(Base):
+    """A secret in .memory/ is worse than one in ordinary source.
+
+    Memories ride the PR, so a value pasted into a note is committed, reviewed as prose, and then
+    compiled into AGENTS.md -- which every agent loads, every session. Two properties matter more
+    than pattern coverage:
+
+      * it must REFUSE. A guard that warns and writes anyway has not guarded anything.
+      * it must not cry wolf. The tool stores a commit SHA in every evidence field and a sha256
+        fingerprint in every entry, so an entropy-based rule fires on the tool's own output -- and
+        a guard that blocks legitimate memories gets switched off, which is worse than no guard.
+    """
+
+    def _repo(self):
+        self.f.write("src/a.py", "x = 1\n")
+        self.f.commit("code")
+        self.f.init()
+
+    def _add(self, body, title="A memory", *extra):
+        return self.f.rmem("add", "--type", "decision", "--title", title, "--body", body,
+                           "--anchor", "src/**", "--author", "t", *extra)
+
+    # ---- it refuses ----
+
+    def test_a_secret_is_refused_and_nothing_is_written(self):
+        self._repo()
+        code, out = self._add("the bucket key is " + FAKE_AWS_KEY)
+        self.assertEqual(code, 1, "a memory carrying a key must be refused:\n" + out)
+        self.assertIn("refused", out)
+        self.assertNotIn(FAKE_AWS_KEY, self.f.read(".memory/decisions.md"),
+                         "the secret was written anyway")
+
+    def test_the_secret_is_never_echoed_in_the_refusal(self):
+        """The refusal lands in CI logs and shell history."""
+        self._repo()
+        _, out = self._add("token: " + FAKE_GITHUB_TOKEN)
+        self.assertNotIn(FAKE_GITHUB_TOKEN, out)
+        self.assertIn("*", out)
+
+    def test_a_luhn_valid_card_number_is_refused(self):
+        self._repo()
+        code, _ = self._add("the card on file is 4111 1111 1111 1111")
+        self.assertEqual(code, 1)
+
+    def test_a_secret_that_arrives_by_hand_edit_fails_the_check(self):
+        """`add` can be bypassed; the check re-reads the files and cannot."""
+        self._repo()
+        self.f.write(".memory/conventions.md",
+                     "# House rules\n\n## Leaked\n\n<!-- id: CONV-2026-01-01-beef\n"
+                     "status: accepted\nanchors: src/**\n-->\n\n"
+                     "token: " + FAKE_GITHUB_TOKEN + "\n")
+        self.assertFails("no-secrets")
+
+    def test_bulk_personal_addresses_are_not_a_citation(self):
+        self._repo()
+        code, _ = self._add("Users affected: a@example.com, b@example.com, c@example.com")
+        self.assertEqual(code, 1, "a list of people must not be recorded")
+
+    # ---- it does not cry wolf ----
+
+    def test_commit_shas_and_its_own_fingerprints_do_not_trip_it(self):
+        self._repo()
+        code, out = self._add("Rolled back at 3f2a9c1e5b7d4086a1c2e3f4b5a69788c0d1e2f3.",
+                              "Rollback", "--evidence", "commit 3f2a9c1e5b7d4086a1c2e3f4b5a69788c0d1e2f3")
+        self.assertEqual(code, 0, "the tool's own output must not trip the scanner:\n" + out)
+        self.assertGreen()
+
+    def test_a_sixteen_digit_number_that_is_not_a_card_is_fine(self):
+        self._repo()
+        code, out = self._add("Ledger account number 1234567890123456 is internal, not a card.")
+        self.assertEqual(code, 0, out)
+
+    def test_naming_an_owner_is_a_notice_not_a_refusal(self):
+        self._repo()
+        code, out = self._add("Page the on-call owner alice@example.com before touching billing.")
+        self.assertEqual(code, 0, "naming an owner must not be refused:\n" + out)
+        self.assertIn("note:", out)
+        self.assertGreen()
+
+    def test_prose_about_secrets_does_not_trip_it(self):
+        self._repo()
+        code, out = self._add("The gateway token must be set in the WARDEN_API_KEY env var.")
+        self.assertEqual(code, 0, "prose about a secret is not a secret:\n" + out)
+    def test_prefixed_secret_names_are_caught(self):
+        """The names people actually use: gateway_token, AWS_SECRET_ACCESS_KEY, db_password.
+
+        The first version of this rule used \b before the secret word, and `_` is a word
+        character -- so \btoken does not match inside `gateway_token` and every one of these
+        sailed through. A pattern guard that misses the common spelling of the thing it guards
+        is noise with a body count.
+        """
+        self._repo()
+        for name in ("gateway_token", "AWS_SECRET_ACCESS_KEY", "db_password",
+                     "SLACK_BOT_TOKEN", "client_secret", "api_key", "private_key"):
+            code, out = self._add("%s: REDACTEDFORTESTING0123456789ab" % name)
+            self.assertEqual(code, 1, "%s must be refused:\n%s" % (name, out))
+
+    def test_a_short_value_after_a_secret_word_is_not_a_secret(self):
+        self._repo()
+        code, out = self._add("Set gateway_token to your own value in .env; never commit it.")
+        self.assertEqual(code, 0, out)
+
+    def test_claim_fields_are_not_secrets(self):
+        """--key/--value are the tool's own vocabulary and must not trip the scanner."""
+        self._repo()
+        code, out = self._add("The window is 90 days.", "Window",
+                              "--key", "refund.window_days", "--value", "90")
         self.assertEqual(code, 0, out)
         self.assertGreen()

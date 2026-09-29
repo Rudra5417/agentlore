@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.6.1"
+VERSION = "0.7.1"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -232,6 +232,132 @@ def resolve_id(needle, entries=None):
     if len(hits) == 1:
         return hits[0], []
     return None, hits
+
+
+# ---------------------------------------------------------------------------
+# Sensitive-data scanning
+#
+# .memory/ is a bad place for a secret, worse than ordinary source. Memories ride the PR, so a
+# token pasted into a note is committed, reviewed as prose, and then compiled into AGENTS.md --
+# which every agent loads into its context. A leak here is delivered on purpose, repeatedly.
+#
+# Decidable only, and high precision on purpose: a false positive blocks a legitimate memory, and
+# a guard that cries wolf gets switched off, which is strictly worse than no guard. So secrets are
+# matched by construction (provider prefixes, PEM blocks, secret-looking assignment with an opaque
+# value) rather than by entropy alone -- a bare entropy rule would fire on the commit SHAs this
+# tool stores in every evidence field.
+# ---------------------------------------------------------------------------
+
+SECRET_PATTERNS = [
+    ("a private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("an AWS access key id", re.compile(r"\b(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b")),
+    ("a GitHub token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b")),
+    ("a Slack token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("an OpenAI key", re.compile(r"\bsk-[A-Za-z0-9]{32,}\b")),
+    ("an Anthropic key", re.compile(r"\bsk-ant-[A-Za-z0-9\-_]{20,}\b")),
+    ("a Google API key", re.compile(r"\bAIza[0-9A-Za-z\-_]{30,}\b")),
+    ("a Stripe key", re.compile(r"\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}\b")),
+    ("a JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")),
+    ("a bearer token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9\-._~+/]{20,}=*")),
+    # A secret-shaped NAME with an opaque VALUE. The value must be long: this is what keeps the
+    # rule off prose like "the token must be set in .env" and off short placeholders.
+    #
+    # The name may be part of a larger identifier, because in practice it almost always is:
+    # gateway_token, AWS_SECRET_ACCESS_KEY, db_password, SLACK_BOT_TOKEN. A plain \b before the
+    # word does NOT work here -- `_` is a word character, so \btoken fails inside `gateway_token`
+    # and every one of those names sails through. The word must simply not be preceded by a letter
+    # or digit. The suffix matters for the same reason: in AWS_SECRET_ACCESS_KEY the word is
+    # followed by more of the name before the `=`.
+    ("a secret-looking assignment", re.compile(
+        r"(?i)(?<![A-Za-z0-9])[A-Za-z0-9]*[_-]?"
+        r"(?:password|passwd|pwd|secret|token|api[_-]?key|apikey|access[_-]?key|"
+        r"auth[_-]?token|client[_-]?secret|private[_-]?key|passphrase)"
+        r"[A-Za-z0-9_-]*\s*[:=]\s*[\"']?([A-Za-z0-9\-_./+=]{16,})")),
+]
+
+# Always a failure: a memory has no legitimate reason to carry one of these.
+PII_HARD_PATTERNS = [
+    ("a US social security number", re.compile(r"\b\d{3}-\d{2}-\d{4}\b")),
+    ("a phone number", re.compile(
+        r"(?<!\d)(?:\+\d{1,3}[ .-]?)?(?:\(\d{3}\)|\d{3})[ .-]\d{3}[ .-]\d{4}(?!\d)")),
+]
+
+# A notice on its own -- naming a person by email or handle is often exactly what an ownership
+# note should do. It becomes a failure only in BULK, because one address is a citation and ten
+# are a customer list.
+PII_SOFT_PATTERNS = [
+    ("an email address", re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")),
+]
+
+PII_BULK_THRESHOLD = 3
+
+
+def _luhn(number):
+    digits = [int(c) for c in number if c.isdigit()]
+    if not 13 <= len(digits) <= 19:
+        return False
+    total, parity = 0, len(digits) % 2
+    for i, d in enumerate(digits):
+        if i % 2 == parity:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return total % 10 == 0
+
+
+CARD_SHAPED = re.compile(r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)")
+
+
+def mask_value(text):
+    """Never echo a secret, even the one you just found.
+
+    This output lands in CI logs and shell history. A short prefix is enough to locate the value
+    and not enough to use it.
+    """
+    text = text.strip()
+    if len(text) <= 6:
+        return "*" * len(text)
+    return text[:2] + "*" * min(len(text) - 2, 16)
+
+
+def scan_sensitive(text):
+    """Findings, strongest first: (severity, kind, lineno, masked).
+
+    severity is 'secret', 'pii-hard' or 'pii-soft'.
+    """
+    out = []
+    lines = text.splitlines()
+    for i, line in enumerate(lines, 1):
+        # finditer, not search: two secrets on one line are two findings. `search` reported only
+        # the first, which undercounted both leaks and the bulk-PII rule that depends on the count.
+        for kind, rx in SECRET_PATTERNS:
+            for m in rx.finditer(line):
+                val = m.group(1) if m.groups() else m.group(0)
+                out.append(("secret", kind, i, mask_value(val)))
+        for kind, rx in PII_HARD_PATTERNS:
+            for m in rx.finditer(line):
+                out.append(("pii-hard", kind, i, mask_value(m.group(0))))
+        for cm in CARD_SHAPED.finditer(line):
+            if _luhn(cm.group(0)):
+                out.append(("pii-hard", "a payment card number", i, mask_value(cm.group(0))))
+        for kind, rx in PII_SOFT_PATTERNS:
+            for m in rx.finditer(line):
+                out.append(("pii-soft", kind, i, mask_value(m.group(0))))
+
+    # Bulk soft PII is not a citation any more, it is a dataset.
+    soft = [f for f in out if f[0] == "pii-soft"]
+    if len({f[3] for f in soft}) >= PII_BULK_THRESHOLD:
+        out = [(("pii-hard" if f[0] == "pii-soft" else f[0]), f[1], f[2], f[3]) for f in out]
+        out.append(("pii-hard", "a bulk list of personal addresses", soft[0][2],
+                    "%d distinct addresses" % len({f[3] for f in soft})))
+    return out
+
+
+def describe_findings(findings):
+    """One line per finding, masked. Shared by `add` (refuse) and `check` (report)."""
+    for sev, kind, lineno, masked in findings:
+        print("    line %s: %s  [%s]" % (lineno, kind, masked))
 
 
 def refuse_id(needle, candidates):
@@ -558,6 +684,27 @@ def cmd_add(args):
     if args.review_by:
         lines.append("review_by: %s" % args.review_by)
     lines += ["-->", "", args.body.strip(), ""]
+
+    # Refuse BEFORE writing. A secret that reaches this file is committed, reviewed as prose, and
+    # then compiled into AGENTS.md for every agent to load -- so the only cheap moment to stop it
+    # is here, and a guard that warns and writes anyway has not guarded anything.
+    candidate = "\n".join(lines)
+    found = scan_sensitive(candidate)
+    hard = [f for f in found if f[0] in ("secret", "pii-hard")]
+    soft = [f for f in found if f[0] == "pii-soft"]
+    if hard:
+        print("refused: this memory looks like it carries a secret or personal data.")
+        describe_findings(hard)
+        print("  .memory/ rides the PR and is compiled into AGENTS.md, which every agent loads,")
+        print("  so a value recorded here is committed, reviewed as prose and delivered on purpose.")
+        print("  Nothing was written. Refer to the secret by name and keep the value in .env or")
+        print("  the secret manager, e.g. \"the gateway key lives in the WARDEN_API_KEY env var\".")
+        return 1
+    if soft:
+        print("note: this memory names personal data. Fine for an owner or an escalation path --")
+        print("      but if this is a record of a person rather than a reference to one, stop.")
+        describe_findings(soft)
+
     with path.open("a") as fh:
         fh.write("\n".join(lines))
     print("added %s (%s) -> %s" % (eid, args.type, fname))
@@ -998,6 +1145,26 @@ def cmd_check(args):
         add("compile-current", bool(committed) and committed.group(0) == compile_block(),
             "AGENTS.md is stale; run: rmem compile")
 
+    # 16/17 nothing in .memory/ should be a secret or a record of a person
+    #
+    # `add` refuses these at the door, but a memory can also arrive by hand-edit or in a
+    # contributor's PR, which is exactly how a leak reaches a repo without anyone running the
+    # tool. So the check re-reads the files rather than trusting the write path.
+    secret_hits, pii_hits, soft_hits = [], [], []
+    for mf in sorted(MEM.glob("*.md")):
+        for sev, kind, lineno, masked in scan_sensitive(mf.read_text()):
+            row = ("%s:%s" % (mf.name, lineno), kind, masked)
+            if sev == "secret":
+                secret_hits.append(row)
+            elif sev == "pii-hard":
+                pii_hits.append(row)
+            else:
+                soft_hits.append(row)
+    add("no-secrets", not secret_hits,
+        "possible secret in .memory/: %s" % ", ".join(r[0] for r in secret_hits[:3]))
+    add("no-pii", not pii_hits,
+        "possible personal data in .memory/: %s" % ", ".join(r[0] for r in pii_hits[:3]))
+
     passed = sum(1 for _, ok, _ in checks if ok)
     total = len(checks)
     color = GREEN if passed == total else RED
@@ -1005,6 +1172,20 @@ def cmd_check(args):
     findings = collect_findings(entries, live, index_ok, fresh, stale, restyled, unsettled,
                                 hazards_unbacked, contradictions, coexisting, unvalued,
                                 chain_problems, unresolved_since)
+    # Never echo the value -- these annotations land in CI logs and are readable by anyone who
+    # can read the repo. Type, file and line are enough to find it; the value is not needed.
+    for rows, level, title in ((secret_hits, "error", "MEMORY-HEALTH: a secret may be recorded in the memory"),
+                               (pii_hits, "error", "MEMORY-HEALTH: personal data may be recorded in the memory"),
+                               (soft_hits, "notice", "MEMORY-HEALTH: personal data named in the memory")):
+        for where, kind, masked in rows:
+            fname, _, lineno = where.partition(":")
+            findings.append({
+                "level": level, "file": ".memory/" + fname, "line": lineno, "title": title,
+                "message": "This looks like %s [%s]. .memory/ rides the PR and is compiled into "
+                           "AGENTS.md, which every agent loads, so a value recorded here is "
+                           "committed and delivered on purpose. Refer to it by name and keep the "
+                           "value in .env or the secret manager." % (kind, masked),
+            })
 
     if args.brief:
         bad = [n for n, ok, _ in checks if not ok]
@@ -1053,6 +1234,14 @@ def cmd_check(args):
             print("    problem: %s" % why)
             print("    %s-> a memory cannot block an edit. Name the real control, add the"
                   " CODEOWNERS rule, or drop the hazard.%s" % (DIM, OFF))
+    if secret_hits or pii_hits or soft_hits:
+        print("\n%spossible sensitive data in .memory/:%s" % (BOLD, OFF))
+        for where, kind, masked in secret_hits + pii_hits:
+            print("  %s  %s  [%s]" % (where, kind, masked))
+        for where, kind, masked in soft_hits:
+            print("  %s%s  %s  [%s]%s" % (DIM, where, kind, masked, OFF))
+        print("  %s-> .memory/ rides the PR and is compiled into AGENTS.md, so anything here is"
+              " committed and delivered. Name the secret; keep the value in .env.%s" % (DIM, OFF))
     if contradictions:
         print("\n%stwo live memories contradict each other:%s" % (BOLD, OFF))
         for a, b in contradictions:

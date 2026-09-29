@@ -1,6 +1,6 @@
 # rmem — git-reviewable repo memory for coding agents
 
-Prototype v0.6.1. One file, stdlib only, no dependencies, and a test suite that runs in
+Prototype v0.7.1. One file, stdlib only, no dependencies, and a test suite that runs in
 fifteen seconds.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
@@ -77,6 +77,8 @@ Fourteen checks. The value is not the score — it is that a failure **names the
 | **claims-agree** | **two live memories claiming different things about the same key** |
 | **supersedes-acyclic** | **a retirement chain that loops or lands on a retired memory** |
 | **compile-current** | **`AGENTS.md` is not what `compile` would produce now — the memory is recorded but never delivered** |
+| **no-secrets** | **a key, token, or private key looks like it is recorded in `.memory/`** |
+| **no-pii** | **a payment card, SSN, phone number, or a bulk list of personal addresses** |
 
 One softer signal is reported but never breaks the build: a **notice** when anchored files
 were only reformatted (bytes changed, meaning identical).
@@ -257,6 +259,49 @@ That warning is the whole reason the command is safe to offer. `rm` rewrites a f
 rewrite history, and in a shared repo the text is already in every clone. The deletion is itself
 a reviewable diff, which is the real safeguard.
 
+## Secrets and personal data in `.memory/`
+
+`.memory/` is a worse place for a secret than ordinary source. Memories **ride the PR**, so a
+value pasted into a note is committed, reviewed as prose, and then **compiled into `AGENTS.md`**,
+which every agent loads every session. A leak here is delivered on purpose, repeatedly, to a
+machine that holds credentials.
+
+So there are two guards, because there are two ways a secret gets in:
+
+```console
+$ rmem add --type decision --title "Prod keys" \
+    --body "gateway_token: REDACTEDFORTESTING0123456789ab" ...
+refused: this memory looks like it carries a secret or personal data.
+    line 15: a secret-looking assignment  [RE****************]
+  Nothing was written.
+```
+
+`add` **refuses before writing** — a guard that warns and writes anyway has not guarded anything.
+`check` re-reads the files, because a memory can also arrive by hand-edit or in someone else's
+PR, which is exactly how a leak reaches a repo without anyone running the tool. Same shape as
+every other failure here: annotated on the offending line, exit 1.
+
+**What is decided, and what is only noticed.** Secrets are matched by construction — provider key
+prefixes, PEM blocks, a secret-shaped name with an opaque value. They are *not* matched by entropy
+alone, deliberately: this tool stores a commit SHA in every evidence field and a sha256
+fingerprint in every entry, so an entropy rule fires on its own output. A guard that blocks
+legitimate memories gets switched off, which is worse than no guard. Tests pin that down — commit
+SHAs, fingerprints, prose *about* a secret, and a 16-digit non-card number must all pass.
+
+Personal data splits the same way. A payment card, an SSN, a phone number, or a **bulk list** of
+addresses fails: one address is a citation, ten are a customer list. A single email is a
+**notice**, not a failure — naming the on-call owner is usually exactly what an ownership memory
+should do.
+
+**The value is never echoed.** Not in the refusal, not in the check output, not in the CI
+annotation — all of which land in logs readable by anyone who can read the repo. Type, file and
+line are enough to find it.
+
+**What this is not.** A pattern guard, not a DLP system. It will not catch a secret with no
+recognisable shape, or one you reworded to dodge it, and it is no substitute for a secret manager
+or a pre-commit scan. It closes the one hole that is specific to this design: the file that is
+committed *and* injected.
+
 ## Evidence: what testing actually showed
 
 ### First, what is and is not established
@@ -404,7 +449,7 @@ never be seen. It also writes the MEMORY-HEALTH table into `$GITHUB_STEP_SUMMARY
 
 Verified on a real private repo: a PR that added a billing function without updating memory
 went red; re-verifying the memory in that same PR turned it green. (At the time the report
-read `9/10` — the tool has since grown checks 10 through 15 and now reads `15/15`.)
+read `9/10` — the tool has since grown checks 10 through 17 and now reads `17/17`.)
 
 ## Tests
 
