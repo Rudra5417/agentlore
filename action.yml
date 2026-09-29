@@ -1,7 +1,5 @@
 name: rmem - memory health
-description: >-
-  Fail the check when code moved under a memory and the memory did not. Typed memories
-  live in .memory/ and are reviewed like code; this runs the gate and annotates the diff.
+description: Repo memory for coding agents: fail the gate when code moved under a memory and the memory did not.
 author: Rudra Patel
 
 branding:
