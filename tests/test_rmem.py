@@ -887,10 +887,16 @@ class TestCliRobustness(Base):
         self.assertIn("rmem", out)
 
     def test_readme_version_matches_the_tool(self):
-        """Docs drift silently. The README states a version; the tool must agree."""
+        """Docs drift silently. The README states a version; the tool must agree.
+
+        Anchored to an explicit marker rather than a turn of phrase: the first version of this
+        test matched "Prototype vX.Y.Z", so rewording the README broke the test while the
+        invariant it guards -- README and tool agree -- was never actually at risk. A test that
+        fails on copy edits gets weakened on the next copy edit.
+        """
         readme = (TOOL.parent / "README.md").read_text()
-        m = re.search(r"Prototype v(\d+\.\d+\.\d+)", readme)
-        self.assertIsNotNone(m, "README should state a version")
+        m = re.search(r"Current release \*\*v(\d+\.\d+\.\d+)\*\*", readme)
+        self.assertIsNotNone(m, "README should state the current release as **vX.Y.Z**")
         assert m is not None
         version = m.group(1)
         code, out = self.f.rmem("--version")

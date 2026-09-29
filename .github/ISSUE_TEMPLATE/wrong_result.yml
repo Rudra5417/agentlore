@@ -1,0 +1,80 @@
+name: False failure or wrong result
+description: The gate failed when it should not have, passed when it should not have, or reported something untrue.
+title: "[wrong result] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most valuable report this project can receive. `rmem` exists to be trusted, so
+        a reproducible wrong answer is worth more than any feature request.
+
+        Please fill in enough that it can be reproduced exactly. If you cannot share your repo,
+        the minimal shape is often enough — attach the relevant `.memory/*.md` and the anchored
+        file, redacted however you need.
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Which direction is wrong?
+      options:
+        - It failed when it should have passed (false failure)
+        - It passed when it should have failed (missed rot — the serious one)
+        - It reported something untrue or misleading
+        - It modified files when it should not have
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect, and what happened instead?
+      placeholder: |
+        Expected: MEMORY-HEALTH 17/17 GREEN
+        Got:      16/17 BROKEN -- dead-ends-settled
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: The smallest sequence of commands that shows it, from a clean state.
+      render: shell
+      placeholder: |
+        rmem init
+        rmem add --type dead-end ... 
+        git commit -am code
+        rmem check --brief
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `rmem --version`.
+      placeholder: rmem 0.7.1
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.12.4"
+    validations:
+      required: true
+  - type: input
+    id: layout
+    attributes:
+      label: Where does `.memory/` live relative to the git root?
+      description: >
+        A memory root that is a subdirectory rather than the repo root has broken this tool before
+        (a path-relativity fail-open in v0.4.1), so this is worth stating explicitly.
+      placeholder: repo root / packages/api/ (monorepo)
+    validations:
+      required: false
+  - type: textarea
+    id: check_output
+    attributes:
+      label: Full output
+      render: shell
+      description: "`rmem check` (not `--brief`), with anything sensitive redacted."
+    validations:
+      required: false

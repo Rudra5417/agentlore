@@ -1,0 +1,64 @@
+name: Adoption or integration problem
+description: Setup did not work, or the gate runs but the memory never reaches your agent.
+title: "[adoption] "
+labels: ["adoption"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A gate that runs is not automatically a gate that works. The most common silent failure is
+        installing `rmem` correctly and getting a green check while the agent **never reads the
+        memory** — everything looks fine and the memory does nothing.
+
+        [INTEGRATION.md](https://github.com/Rudra5417/rmem/blob/main/INTEGRATION.md) covers which
+        hosts read `AGENTS.md`, which need config, the truncation limits, and the one-question
+        probe that proves the memory arrived. Worth a look before filing.
+  - type: input
+    id: agent
+    attributes:
+      label: Which coding agent / host?
+      placeholder: Claude Code / Codex / Copilot / Cursor / Gemini CLI / my own harness
+    validations:
+      required: true
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What is happening?
+      options:
+        - Setup failed (install, init, or the action errors)
+        - The gate runs but the agent never mentions the memory
+        - The agent reads the memory but the wrong part is there / the end is missing
+        - Compiling to AGENTS.md does not work alongside an existing AGENTS.md or CLAUDE.md
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: The delivery probe
+      description: >
+        Ask your agent "quote verbatim what your project instructions say" and paste the answer.
+        Without this, "memory had no effect" and "memory never arrived" are indistinguishable.
+      render: markdown
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      placeholder: rmem 0.7.1
+    validations:
+      required: true
+  - type: textarea
+    id: tree
+    attributes:
+      label: Where things live
+      description: Where `.memory/`, `AGENTS.md`, and the git root are relative to each other.
+      render: shell
+      placeholder: |
+        repo/            <- git root
+          AGENTS.md
+          packages/api/
+            .memory/     <- memory root is a subdirectory
+    validations:
+      required: false
