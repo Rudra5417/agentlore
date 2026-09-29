@@ -988,3 +988,48 @@ class TestIdResolution(Base):
         code, out = self.f.rmem("verify", "NOPE-123", "--resolved-by", "PR #1")
         self.assertEqual(code, 1, out)
         self.assertIn("no memory with id", out)
+
+
+class TestShippedArtifactsStayInSync(Base):
+    """Invariants about the FILES THIS REPO SHIPS, not about behaviour.
+
+    Both of these were violated in one push and went red in CI, which is a worse signal
+    than a failing test: CI is only read after the push, and only if someone looks.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.repo = Path(__file__).resolve().parent.parent
+
+    def _examples(self):
+        ex = self.repo / "examples"
+        return [d for d in sorted(ex.iterdir()) if (d / ".memory").is_dir()]
+
+    def test_committed_agents_md_matches_compile(self):
+        """A stale AGENTS.md is a memory nothing delivers. Regenerate with rmem compile."""
+        examples = self._examples()
+        self.assertTrue(examples, "no shipped examples found -- the test is not looking at anything")
+        for d in examples:
+            agents = d / "AGENTS.md"
+            before = agents.read_text()
+            subprocess.run([sys.executable, str(self.repo / "rmem"), "index"], cwd=d,
+                           capture_output=True, text=True)
+            r = subprocess.run([sys.executable, str(self.repo / "rmem"), "compile"], cwd=d,
+                               capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+            self.assertEqual(agents.read_text(), before,
+                             f"{d.relative_to(self.repo)}/AGENTS.md is stale; run rmem compile")
+
+    def test_vendored_tool_copies_match_the_root_tool(self):
+        """A vendored copy that lags the shipped tool demonstrates a tool nobody ships.
+
+        This is exactly how a false verification happened once: an example's committed
+        AGENTS.md was checked as "unchanged" using its own vendored copy, which predated the
+        change, so the check proved nothing and CI caught it instead.
+        """
+        root = self.repo / "rmem"
+        copies = [c for d in self._examples() for c in [d / "tools" / "rmem"] if c.exists()]
+        self.assertTrue(copies, "no vendored copies found -- the test is not looking at anything")
+        for c in copies:
+            self.assertEqual(c.read_bytes(), root.read_bytes(),
+                             f"{c.relative_to(self.repo)} differs from rmem; re-copy it")

@@ -385,7 +385,7 @@ read `9/10` — the tool has since grown checks 10 through 14 and now reads `14/
 ## Tests
 
 ```sh
-python3 run_tests.py          # 69 tests, ~24s, stdlib only
+python3 run_tests.py          # 71 tests, ~24s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp
