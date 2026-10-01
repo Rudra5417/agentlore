@@ -1,0 +1,8 @@
+{
+  "type": "dead-end",
+  "title": "Refunding an unsettled charge is refused by the provider",
+  "body": "A refund only applies once the money has moved. While the charge is still unsettled the provider refuses it with not_settled, so the same-day path has to reverse the authorization instead.",
+  "anchor": "src/cancel.py",
+  "evidence": "INC-4821 - same-day cancellations failing in production",
+  "author": "payments"
+}

@@ -1,0 +1,6 @@
+Cancelling an order only works once its payment has settled. Same-day cancellations fail
+in production, and support is escalating them by hand.
+
+Make `cancel_order(order_id)` work for orders whose transaction has not settled: the
+customer's money must come back and the order must end up cancelled. The existing tests must
+keep passing, and the same-day case must be covered.

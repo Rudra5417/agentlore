@@ -30,7 +30,24 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
-FIXTURE = HERE / "fixtures" / "idempotent-refund"
+DEFAULT_FIXTURE = "idempotent-refund"
+FIXTURE = HERE / "fixtures" / DEFAULT_FIXTURE
+PROBE = None
+
+
+def load_fixture(name):
+    """Point the runner at a fixture. A fixture may ship `probe.py`, which measures the
+    outcome BEHAVIOURALLY instead of reading the source -- used when the whole question is
+    whether the result works, not what it looks like."""
+    global FIXTURE, PROBE
+    FIXTURE = HERE / "fixtures" / name
+    if not FIXTURE.is_dir():
+        raise SystemExit("no such fixture: %s (have: %s)"
+                         % (name, ", ".join(sorted(x.name for x in (HERE / "fixtures").iterdir()))))
+    if (FIXTURE / "probe.py").exists():
+        sys.path.insert(0, str(FIXTURE))
+        import probe as _probe
+        PROBE = _probe
 RUNS = HERE / "runs"
 LOGS = HERE / "logs"
 HARNESS = HERE / "harness.py"
@@ -127,10 +144,12 @@ def run_one(arm: str, n: int, task: str) -> dict:
               and (".memory" in str(s.get("args", {}).get("path", ""))
                    or "AGENTS.md" in str(s.get("args", {}).get("path", "")))]
 
-    src = d / "src" / "refund.py"
-    pristine = (FIXTURE / "fixture" / "src" / "refund.py").read_text()
+    primary = json.loads((FIXTURE / "design.json").read_text()).get("primary_file",
+                                                                    "src/refund.py")
+    src = d / primary
+    pristine = (FIXTURE / "fixture" / primary).read_text()
     changed = bool(src.exists()) and src.read_text() != pristine
-    return {
+    r = {
         "run": f"{arm}{n}", "arm": arm,
         "valid": bool(data.get("finished", False)) and changed,
         "body_changed": changed,
@@ -138,8 +157,19 @@ def run_one(arm: str, n: int, task: str) -> dict:
         "steps": len(steps), "finished": data.get("finished", False),
         "models": data.get("served_models", []),
         "read_memory": len(looked) > 0,
-        "refund_src": src.read_text() if src.exists() else "",
+        "primary_src": src.read_text() if src.exists() else "",
     }
+    src_text = r["primary_src"]
+    r["parses"] = parses(src_text) if src_text.strip() else False
+    if PROBE is not None:
+        obs = PROBE.observe(d)
+        r["probe"] = obs
+        r["verdict"] = PROBE.classify(obs)
+    elif r["parses"]:
+        r["verdict"] = classify(src_text)
+    else:
+        r["verdict"] = "DOES NOT PARSE -- " + classify(src_text)
+    return r
 
 
 REFERENCE_IMPLS = {
@@ -209,12 +239,16 @@ def check_fixture_validity():
     import subprocess
     import tempfile
 
+    def primary_file():
+        return json.loads((FIXTURE / "design.json").read_text()).get("primary_file",
+                                                                    "src/refund.py")
+
     def outcome(src_text, label):
         d = Path(tempfile.mkdtemp())
         try:
             shutil.copytree(FIXTURE / "fixture", d, dirs_exist_ok=True)
             if src_text is not None:
-                (d / "src" / "refund.py").write_text(src_text)
+                (d / primary_file()).write_text(src_text)
             r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
                                cwd=d, capture_output=True, text=True)
             return r.returncode == 0
@@ -222,27 +256,58 @@ def check_fixture_validity():
             shutil.rmtree(d, ignore_errors=True)
 
     problems = []
+    # A probe-based fixture brings its own two reference implementations and is checked
+    # against THOSE. Running the other fixture's references here would fail them for not
+    # solving a task they were never written for -- a false "unfair" that hides the real check.
+    uses_probe = (FIXTURE / "refs.py").exists() and PROBE is not None
+    if uses_probe:
+        sys.path.insert(0, str(FIXTURE))
+        import refs
+        import tempfile as _tf
+        for label, text in (("correct", refs.CORRECT), ("trap", refs.TRAP)):
+            d = Path(_tf.mkdtemp())
+            shutil.copytree(FIXTURE / "fixture", d, dirs_exist_ok=True)
+            (d / primary_file()).write_text(text)
+            obs = PROBE.observe(d)
+            verdict = PROBE.classify(obs)
+            if label not in verdict.lower():
+                problems.append("the probe did not label the hand-written %s implementation as "
+                                "%r -- it said %r. The ruler is broken, so a null from it would "
+                                "mean nothing." % (label, label, verdict))
+            r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+                               cwd=d, capture_output=True, text=True)
+            if r.returncode != 0:
+                problems.append("the hand-written %s implementation fails the visible suite -- "
+                                "the fixture is unfair or has no power" % label)
+            shutil.rmtree(d, ignore_errors=True)
+        print("  OK: probe labels the hand-written correct/trap implementations correctly,")
+        print("      and BOTH pass the visible suite -- the tests genuinely cannot tell them apart")
     if outcome(None, "untouched"):
         problems.append("the untouched fixture already passes -- there is no task")
-    for label, src in REFERENCE_IMPLS.items():
-        if not outcome(src, label):
-            problems.append(f"a {label} implementation fails the suite -- the fixture is unfair")
+    if not uses_probe:
+        for label, src in REFERENCE_IMPLS.items():
+            if not outcome(src, label):
+                problems.append(f"a {label} implementation fails the suite -- the fixture is unfair")
     if problems:
         raise SystemExit("FIXTURE VALIDITY FAILED:\n  " + "\n  ".join(problems))
-    print("  OK: fixture is fair (all 3 correct/trap styles pass) and still has power")
-    print("      (the untouched fixture fails, and the trap passes, so the visible tests")
-    print("       genuinely cannot distinguish correct from trap)")
+    if not uses_probe:
+        print("  OK: fixture is fair (all 3 correct/trap styles pass) and still has power")
+        print("      (the untouched fixture fails, and the trap passes, so the visible tests")
+        print("       genuinely cannot distinguish correct from trap)")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--runs", type=int, default=6, help="runs per arm")
     ap.add_argument("--arms", default="A,B")
+    ap.add_argument("--fixture", default=DEFAULT_FIXTURE)
     ap.add_argument("--dry-run", action="store_true",
                     help="build both arms and verify they differ only by memory; no model calls")
     a = ap.parse_args()
 
+    load_fixture(a.fixture)
     task = (FIXTURE / "task.txt").read_text().strip()
+    print("fixture: %s%s" % (a.fixture, "  (probe: behavioural)" if PROBE else "  (classifier: source)"))
     arms = [x.strip().upper() for x in a.arms.split(",") if x.strip()]
 
     if a.dry_run:
@@ -290,9 +355,6 @@ def main():
     for arm in arms:
         for n in range(1, a.runs + 1):
             r = run_one(arm, n, task)
-            r["parses"] = parses(r["refund_src"]) if r["refund_src"].strip() else False
-            r["verdict"] = classify(r["refund_src"]) if r["parses"] else \
-                "DOES NOT PARSE -- " + classify(r["refund_src"])
             results.append(r)
             print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
                   f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}",
@@ -310,8 +372,8 @@ def main():
             print(f"  {label:12} no valid runs ({inv} invalid)")
             continue
         print(f"  {label:12} valid_n={len(rs)} invalid={inv} "
-              f"trap={sum(x['parses'] and 'trap' in x['verdict'] for x in rs)} "
-              f"correct={sum(x['parses'] and 'correct' in x['verdict'] for x in rs)} "
+              f"trap={sum('trap' in x['verdict'].lower() for x in rs)} "
+              f"correct={sum('correct' in x['verdict'].lower() for x in rs)} "
               f"did_not_parse={sum(not x['parses'] for x in rs)} "
               f"suite_green={sum(x['suite_green'] for x in rs)} "
               f"read_memory={sum(x['read_memory'] for x in rs)}")

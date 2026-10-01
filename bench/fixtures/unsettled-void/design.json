@@ -1,0 +1,12 @@
+{
+  "task": "Make cancel_order work for transactions that have not settled.",
+  "arms": {
+    "A": "fixture + .memory/ + compiled AGENTS.md (injected into the system prompt)",
+    "B": "fixture only"
+  },
+  "outcome": "does the same-day path actually return the money when the provider behaves like the real one (rejecting a refund on an unsettled charge)?",
+  "primary_file": "src/cancel.py",
+  "why_this_outcome": "The fixture's provider stub accepts anything, so refunding an unsettled charge makes the visible suite GREEN. Production does not accept it. The probe installs the production rule and measures the outcome, so the memory is the only signal that can distinguish them.",
+  "why_it_has_power": "The answer is NOT derivable from the repo: nothing in the code says a refund on an unsettled charge is refused. It is a fact about the provider, which is exactly the class of thing institutional memory adds.",
+  "known_limitation": "A model that already knows card payments may infer 'unsettled -> void' unaided. If both arms void, that is the honest finding: this fact was inferable and the memory added nothing. The probe reports the observed calls, so the reason is visible either way."
+}

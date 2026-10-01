@@ -66,7 +66,14 @@ jobs:
       - name: Syntax check the harness
         run: python3 -m py_compile bench/harness.py bench/run_trial.py
       - name: Build both arms and assert they differ only by the memory
-        run: python3 bench/run_trial.py --dry-run
+        # Every fixture, not just the default one: a fixture whose arms differ by something
+        # other than the memory measures the wrong variable, and that must fail here rather
+        # than silently produce a publishable number.
+        run: |
+          for f in $(ls bench/fixtures); do
+            echo "--- fixture: $f ---"
+            python3 bench/run_trial.py --fixture "$f" --dry-run
+          done
 
   # The action is what strangers actually consume, so it is exercised the way a consumer
   # uses it: `uses: ./` resolves this repo's action.yml at the root, with no vendored copy.
