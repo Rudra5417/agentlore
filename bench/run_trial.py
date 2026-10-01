@@ -359,7 +359,9 @@ def main():
             r = run_one(arm, n, task, a.max_steps)
             results.append(r)
             print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
-                  f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}",
+                  f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}"
+                  + (f"  [harness: repaired={r['repaired']} truncated={r['truncations']}]"
+                     if r.get('repaired') or r.get('truncations') else ""),
                   flush=True)
 
     (LOGS / "results.json").write_text(json.dumps(results, indent=2))
@@ -378,7 +380,8 @@ def main():
               f"correct={sum('correct' in x['verdict'].lower() for x in rs)} "
               f"did_not_parse={sum(not x['parses'] for x in rs)} "
               f"suite_green={sum(x['suite_green'] for x in rs)} "
-              f"read_memory={sum(x['read_memory'] for x in rs)}")
+              f"read_memory={sum(x['read_memory'] for x in rs)} "
+              f"harness_repairs={sum(x.get('repaired', 0) for x in rs)}")
 
 
 if __name__ == "__main__":
