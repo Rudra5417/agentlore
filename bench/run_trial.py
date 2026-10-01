@@ -124,7 +124,7 @@ def classify(src: str) -> str:
     return "NO dedupe / other (inspect)"
 
 
-def run_one(arm: str, n: int, task: str) -> dict:
+def run_one(arm: str, n: int, task: str, max_steps: str = "20") -> dict:
     d = RUNS / f"{arm}{n}"
     build_arm(arm, d)
 
@@ -132,7 +132,7 @@ def run_one(arm: str, n: int, task: str) -> dict:
     env = dict(os.environ)
     with log.open("w") as fh:
         subprocess.run([sys.executable, str(HARNESS), "--dir", str(d), "--task", task,
-                        "--max-steps", "14", "--out", str(out)],
+                        "--max-steps", str(max_steps), "--out", str(out)],
                        stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=3600)
 
     # measured by US, not reported by the agent: the model's summary is not evidence
@@ -301,6 +301,7 @@ def main():
     ap.add_argument("--runs", type=int, default=6, help="runs per arm")
     ap.add_argument("--arms", default="A,B")
     ap.add_argument("--fixture", default=DEFAULT_FIXTURE)
+    ap.add_argument("--max-steps", default="20")
     ap.add_argument("--dry-run", action="store_true",
                     help="build both arms and verify they differ only by memory; no model calls")
     a = ap.parse_args()
@@ -347,14 +348,15 @@ def main():
 
     RUNS.mkdir(exist_ok=True)
     LOGS.mkdir(exist_ok=True)
-    for old in list(LOGS.glob("*.log")) + list(LOGS.glob("*.json")):
+    for old in (list(LOGS.glob("*.log")) + list(LOGS.glob("*.json"))
+                + list(LOGS.glob("*.unparsed-*"))):
         old.unlink()
     print(f"cleared stale artifacts; running {len(arms)} arms x {a.runs} runs")
 
     results = []
     for arm in arms:
         for n in range(1, a.runs + 1):
-            r = run_one(arm, n, task)
+            r = run_one(arm, n, task, a.max_steps)
             results.append(r)
             print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
                   f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}",

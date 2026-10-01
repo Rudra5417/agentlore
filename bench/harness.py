@@ -38,6 +38,9 @@ from pathlib import Path
 
 GATEWAY = os.environ.get("BENCH_URL", "http://localhost:11434/v1/chat/completions")
 MODEL = os.environ.get("BENCH_MODEL", "llama3:latest")
+# A whole-file write lives inside one JSON reply, so this has to be generous: a reply cut short
+# is unparseable, and an unparseable reply used to end the run looking like a failed attempt.
+MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "16384"))
 PACE_S = float(os.environ.get("BENCH_PACE", "0"))
 RETRIES = int(os.environ.get("BENCH_RETRIES", "9"))
 
@@ -56,9 +59,68 @@ Tools:
 
 Rules:
 - Exactly one tool per turn. No prose outside the JSON object.
+- `content` is a JSON string. Do NOT use triple quotes or a fenced block, and do NOT type a
+  literal newline inside it. Write the file as one line and use the escape sequence \\n wherever
+  the file should have a newline. Example: {"path": "a.py", "content": "import os\\n\\nprint(1)\\n"}
 - Read the code before changing it.
 - Keep the existing tests passing.
 - When the tests pass and the task is complete, call done."""
+
+
+REPAIRS = [0]
+
+
+def _escape_raw_controls(text):
+    """Escape newlines/tabs sitting INSIDE a JSON string literal.
+
+    The contract asks for the file content as a JSON string, but a model reasonably reaches for
+    a triple-quoted block and leaves the newlines raw, which is not JSON. The intent is
+    unambiguous, and a real host would have used native tool-calling and never met the problem,
+    so the harness repairs it rather than scoring the run as a failed attempt. Every repair is
+    counted and reported: a silent repair would be a way for the harness to flatter an arm.
+    """
+    out, in_str, esc = [], False, False
+    for ch in text:
+        if in_str:
+            if esc:
+                out.append(ch)
+                esc = False
+                continue
+            if ch == "\\":
+                out.append(ch)
+                esc = True
+                continue
+            if ch == '"':
+                in_str = False
+            elif ch == "\n":
+                out.append("\\n")
+                continue
+            elif ch == "\r":
+                out.append("\\r")
+                continue
+            elif ch == "\t":
+                out.append("\\t")
+                continue
+        elif ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
+
+
+def _unescape_overescaped(content):
+    """Decode a double-escaped file body.
+
+    A model told to escape newlines sometimes writes a DOUBLE backslash, so the file lands with
+    literal backslash-n instead of newlines and every run dies on a SyntaxError that looks like
+    the agent's fault. Narrow on purpose: only when the content contains no real newline at all
+    but does contain escape sequences -- a genuine file holding backslash-n (a Python string
+    literal, say) has real newlines in it too, so it is left alone. Counted in REPAIRS.
+    """
+    if "\n" in content:
+        return content, False
+    if "\\n" not in content and "\\t" not in content:
+        return content, False
+    return (content.replace("\\n", "\n").replace("\\t", "\t").replace('\\"', '"'), True)
 
 
 def extract_json(text):
@@ -86,6 +148,13 @@ def extract_json(text):
                             return obj
                     except Exception:
                         pass
+                    try:
+                        obj = json.loads(_escape_raw_controls(text[start:i + 1]))
+                        if isinstance(obj, dict) and "tool" in obj:
+                            REPAIRS[0] += 1
+                            return obj
+                    except Exception:
+                        pass
                     break
     return None
 
@@ -95,11 +164,13 @@ def call_model(messages, timeout=180):
 
     A 429 or a truncated reply mistaken for a model decision would be scored as the agent's
     behaviour, which is exactly the measurement error that produces a confident wrong answer.
-    4096 tokens because a write_file call carries a whole file inside its JSON: at 1600 the
-    reply was cut mid-object and the run ended unparseable.
+    A write_file call carries a whole file inside its JSON, so the reply is much longer than a
+    list_dir call: at 1600 tokens it was cut mid-object and the run ended unparseable. The limit
+    is now an env knob (BENCH_MAX_TOKENS) and the finish reason is returned, so a truncated reply
+    can be reported as truncation rather than silently scored as the agent's behaviour.
     """
     body = json.dumps({
-        "model": MODEL, "messages": messages, "temperature": 0, "max_tokens": 4096,
+        "model": MODEL, "messages": messages, "temperature": 0, "max_tokens": MAX_TOKENS,
     }).encode()
     last = "?"
     for attempt in range(1, RETRIES + 1):
@@ -113,7 +184,9 @@ def call_model(messages, timeout=180):
                 raw = r.read().decode()
             data = json.loads(raw)
             if "choices" in data:
-                return data["choices"][0]["message"]["content"], served
+                choice = data["choices"][0]
+                return (choice["message"]["content"] or "",
+                        served, choice.get("finish_reason") or "?")
             last = raw[:300]
         except urllib.error.HTTPError as e:
             last = e.read().decode()[:300]
@@ -123,8 +196,8 @@ def call_model(messages, timeout=180):
             last = str(e)[:300]
         if attempt < RETRIES:
             time.sleep(min(20 * attempt, 90))
-    return json.dumps({"thought": "gateway error", "tool": "_error",
-                       "args": {"detail": last}}), "?"
+    return (json.dumps({"thought": "gateway error", "tool": "_error",
+                        "args": {"detail": last}}), "?", "error")
 
 
 def safe(root: Path, rel: str):
@@ -154,8 +227,13 @@ def do_tool(root: Path, tool: str, args: dict):
     if tool == "write_file":
         p = safe(root, args["path"])
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(args.get("content", ""))
-        return f"wrote {args['path']} ({len(args.get('content', ''))} bytes)"
+        content = args.get("content", "")
+        content, fixed = _unescape_overescaped(content)
+        if fixed:
+            REPAIRS[0] += 1
+        p.write_text(content)
+        return (f"wrote {args['path']} ({len(content)} bytes)"
+                + (" [harness: decoded double-escaped newlines]" if fixed else ""))
 
     if tool == "run_tests":
         r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
@@ -185,21 +263,32 @@ def main():
     messages = [{"role": "system", "content": build_system_prompt(root)},
                 {"role": "user", "content": a.task}]
     steps, parse_fails, served_models, done = [], 0, set(), False
+    truncations = 0
 
     for n in range(1, a.max_steps + 1):
-        content, served = call_model(messages)
+        content, served, finish = call_model(messages)
         served_models.add(served)
         act = extract_json(content)
+        if finish == "length":
+            truncations += 1
 
         if act is None or act.get("tool") == "_error":
             parse_fails += 1
+            # Keep the whole reply. Reading 200 characters of a broken JSON and guessing at the
+            # cause is how a harness limitation gets published as a model finding.
+            keep = Path(f"{a.out}.unparsed-{n}.txt")
+            keep.write_text("finish_reason: %s\nchars: %d\n\n%s" % (finish, len(content), content))
             detail = (act or {}).get("args", {}).get("detail", content[:200])
-            print(f"[{n}] unparsed/error: {detail[:200]}", flush=True)
+            print(f"[{n}] unparsed/error (finish={finish}, {len(content)} chars, saved "
+                  f"{keep.name}): {detail[:160]}", flush=True)
             messages.append({"role": "assistant", "content": content[:2000]})
-            messages.append({"role": "user", "content":
-                             "That was not a single JSON object with a 'tool' key. "
-                             "Reply with exactly one JSON object."})
-            if parse_fails >= 3:
+            why = ("Your reply had a raw newline inside a JSON string, which is invalid. "
+                   "Put the whole file on one line and escape newlines as \\n."
+                   if content.lstrip().startswith("{") and '"tool"' in content else
+                   "That was not a single JSON object with a 'tool' key. Reply with exactly one "
+                   "JSON object, and use the 'done' tool when the task is complete.")
+            messages.append({"role": "user", "content": why})
+            if parse_fails >= 4:
                 break
             continue
 
@@ -226,8 +315,10 @@ def main():
     Path(a.out).write_text(json.dumps({
         "dir": str(root), "task": a.task, "steps": steps,
         "finished": done, "served_models": sorted(served_models),
+        "parse_fails": parse_fails, "truncations": truncations, "repaired": REPAIRS[0],
     }, indent=2))
-    print(f"--- finished={done} steps={len(steps)} model={sorted(served_models)}")
+    print(f"--- finished={done} steps={len(steps)} model={sorted(served_models)} "
+          f"parse_fails={parse_fails} truncations={truncations} repaired={REPAIRS[0]}")
 
 
 if __name__ == "__main__":
