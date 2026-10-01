@@ -27,8 +27,10 @@
 * **No compression.** `lore` digests at 500 entries. `rmem` has no answer for growth.
 * **No history sweep for `rm`.** The tool warns that history is untouched but cannot tell you
   whether a given string ever appeared in a memory. `git log -S` does that, unassisted.
-* **No Marketplace listing.** The action is consumed by tag (`Rudra5417/rmem@v1`), which is
-  all `uses:` needs; Marketplace needs a published release plus publisher settings.
+* **Not listed on the Marketplace yet.** The action is consumed by tag (`Rudra5417/rmem@v1`),
+  which is all `uses:` needs. As of v0.8.0 the published release exists, so listing is one
+  web-UI step away (publisher settings plus the Marketplace tick, which needs 2FA). Held on
+  purpose, not blocked.
 * **No `latest`/floating major beyond `v1`.** Standard for actions (re-point `v1` at each
   release), but it does mean `@v1` is a moving target by design.
 * **AST-aware anchors remain the right upgrade** for the raw hash; the stripped view only
@@ -44,7 +46,10 @@
 * **Memory is instructions, so protect it like code.** Put `.memory/` in CODEOWNERS. A wrong
   or malicious entry is read by every agent in every session: it is a persistent prompt
   injection, not a typo. Never let a memory instruct anything about auth, secrets, CI config
-  or permissions. Git history is forever, so treat every memory as published — no customer
+  or permissions. The gate refuses the blatant cases -- `no-agent-directives` catches
+  concealment, skipping the check, credential handling and weakening a control -- but that is
+  **not** injection detection: a skilled injection written as ordinary house rules passes, and
+  review is the control. Nothing yet fails a PR that changes `.memory/` without a review. Git history is forever, so treat every memory as published — no customer
   names, no incident detail, no internal-only hostnames. That is also why `retract` is the
   default way to remove a bad memory and `rm` is the exception.
 * **The winner is a platform team, not a purchase.** Realistic adoption is vendoring this into
