@@ -1081,6 +1081,42 @@ class TestIdResolution(Base):
         self.assertIn("no memory with id", out)
 
 
+class TestAGatewayFailureIsNamedNotRetried(unittest.TestCase):
+    """A dead upstream must fail fast and say why.
+
+    An empty account arrived as a 402 wrapped inside a 502, and 502 is a retryable code -- so
+    every step retried nine times with backoff. A run that is merely unreachable looked exactly
+    like a run that is thinking, and a billing problem was read as a slow model. The body below
+    is the one that actually came back.
+    """
+
+    def _harness(self):
+        import importlib.util
+        path = Path(__file__).resolve().parent.parent / "bench" / "harness.py"
+        spec = importlib.util.spec_from_file_location("harness_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_the_real_wrapped_402_is_treated_as_permanent(self):
+        m = self._harness()
+        body = ('{"error":{"message":"all candidates failed: HTTP 402: {\\"error\\":{\\"message'
+                '\\":\\"A positive credit balance is required for all requests, including BYOK'
+                '\\"}}"}}')
+        self.assertIsNotNone(m.permanent_reason(body),
+                             "a wrapped 402 must not be retried for nine minutes")
+
+    def test_a_plain_outage_is_still_retryable(self):
+        m = self._harness()
+        self.assertIsNone(m.permanent_reason('{"error":{"message":"upstream unavailable"}}'))
+        self.assertIsNone(m.permanent_reason("HTTP 503: service temporarily unavailable"))
+
+    def test_the_retry_budget_is_bounded(self):
+        m = self._harness()
+        self.assertLessEqual(m.RETRY_BUDGET_S, 300,
+                             "9 retries with backoff is ~9 minutes per step; that must be capped")
+
+
 class TestLoopCannotEditItsExam(unittest.TestCase):
     """The memory loop's only real safety property: it cannot move what measures it.
 

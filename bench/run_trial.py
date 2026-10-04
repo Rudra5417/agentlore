@@ -161,6 +161,7 @@ def run_one(arm: str, n: int, task: str, max_steps: str = "20") -> dict:
     r = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests"],
                        cwd=d, capture_output=True, text=True, timeout=180)
     data = json.loads(out.read_text()) if out.exists() else {}
+    gateway_error = data.get("gateway_error")
     steps = data.get("steps", [])
     looked = [s for s in steps if s.get("tool") == "read_file"
               and (".memory" in str(s.get("args", {}).get("path", ""))
@@ -179,6 +180,7 @@ def run_one(arm: str, n: int, task: str, max_steps: str = "20") -> dict:
         "steps": len(steps), "finished": data.get("finished", False),
         "models": data.get("served_models", []),
         "read_memory": len(looked) > 0,
+        "gateway_error": gateway_error,
         "primary_src": src.read_text() if src.exists() else "",
     }
     src_text = r["primary_src"]
@@ -384,6 +386,13 @@ def main():
         for n in range(1, a.runs + 1):
             r = run_one(arm, n, task, a.max_steps)
             results.append(r)
+            if r.get("gateway_error"):
+                (LOGS / "results.json").write_text(json.dumps(results, indent=2))
+                raise SystemExit(
+                    "\nTRIAL ABORTED at %s: the model could not be reached, so this run is not\n"
+                    "an observation about the agent.\n  %s\n"
+                    "Nothing after this point is worth running until the gateway serves again."
+                    % (r["run"], r["gateway_error"][:300]))
             print(f"{r['run']:4} valid={str(r['valid']):5} green={str(r['suite_green']):5} "
                   f"steps={r['steps']:2} read_memory={str(r['read_memory']):5} :: {r['verdict']}"
                   + (f"  [harness: repaired={r['repaired']} truncated={r['truncations']}]"

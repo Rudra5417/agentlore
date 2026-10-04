@@ -43,6 +43,31 @@ MODEL = os.environ.get("BENCH_MODEL", "llama3:latest")
 MAX_TOKENS = int(os.environ.get("BENCH_MAX_TOKENS", "16384"))
 PACE_S = float(os.environ.get("BENCH_PACE", "0"))
 RETRIES = int(os.environ.get("BENCH_RETRIES", "9"))
+# Total seconds a single model call may spend retrying. Without a ceiling, 9 retries with
+# backoff is ~9 minutes per step, and a run that is merely unreachable looks exactly like a
+# run that is thinking -- which is how a billing problem got read as a slow model.
+RETRY_BUDGET_S = float(os.environ.get("BENCH_RETRY_BUDGET", "120"))
+
+
+class GatewayDown(Exception):
+    """The gateway cannot serve requests and retrying will not fix it."""
+
+
+# A gateway may wrap a permanent upstream failure in a retryable-looking 502. The 402 from an
+# empty account arrived that way: "all candidates failed: HTTP 402 ... insufficient_funds".
+PERMANENT_MARKERS = ("insufficient_funds", "credit balance", "invalid_api_key",
+                     "unauthorized", "quota exceeded", "billing")
+
+
+def permanent_reason(detail):
+    """Return the reason if this failure will never succeed on retry, else None."""
+    d = detail.lower()
+    for marker in PERMANENT_MARKERS:
+        if marker in d:
+            return detail
+    if re.search(r"HTTP (401|402|403)\b", detail):
+        return detail
+    return None
 
 SYSTEM = """You are a careful software engineer working in a small Python repository.
 
@@ -173,6 +198,7 @@ def call_model(messages, timeout=180):
         "model": MODEL, "messages": messages, "temperature": 0, "max_tokens": MAX_TOKENS,
     }).encode()
     last = "?"
+    started = time.time()
     for attempt in range(1, RETRIES + 1):
         if PACE_S:
             time.sleep(PACE_S)
@@ -189,11 +215,19 @@ def call_model(messages, timeout=180):
                         served, choice.get("finish_reason") or "?")
             last = raw[:300]
         except urllib.error.HTTPError as e:
-            last = e.read().decode()[:300]
+            last = e.read().decode()[:400]
+            why = permanent_reason(last)
+            if why:
+                raise GatewayDown("HTTP %d: %s" % (e.code, why[:220]))
             if e.code not in (429, 500, 502, 503, 504):
                 break
+        except urllib.error.URLError as e:
+            last = str(e)[:300]
         except Exception as e:
             last = str(e)[:300]
+        if time.time() - started > RETRY_BUDGET_S:
+            last = "gave up after %.0fs of retries: %s" % (time.time() - started, last)
+            break
         if attempt < RETRIES:
             time.sleep(min(20 * attempt, 90))
     return (json.dumps({"thought": "gateway error", "tool": "_error",
@@ -264,9 +298,17 @@ def main():
                 {"role": "user", "content": a.task}]
     steps, parse_fails, served_models, done = [], 0, set(), False
     truncations = 0
+    gateway_error = None
 
     for n in range(1, a.max_steps + 1):
-        content, served, finish = call_model(messages)
+        try:
+            content, served, finish = call_model(messages)
+        except GatewayDown as e:
+            # Stop the run immediately and say so. A run that cannot reach a model has not
+            # produced an observation about the agent, and must never be scored as one.
+            gateway_error = str(e)
+            print("GATEWAY DOWN, run abandoned: %s" % gateway_error[:220], flush=True)
+            break
         served_models.add(served)
         act = extract_json(content)
         if finish == "length":
@@ -316,6 +358,7 @@ def main():
         "dir": str(root), "task": a.task, "steps": steps,
         "finished": done, "served_models": sorted(served_models),
         "parse_fails": parse_fails, "truncations": truncations, "repaired": REPAIRS[0],
+        "gateway_error": gateway_error,
     }, indent=2))
     print(f"--- finished={done} steps={len(steps)} model={sorted(served_models)} "
           f"parse_fails={parse_fails} truncations={truncations} repaired={REPAIRS[0]}")

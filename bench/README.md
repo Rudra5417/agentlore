@@ -85,6 +85,38 @@ The lesson generalises: a benchmark fixture must be indifferent to *how* a corre
 implemented, or it will report the implementation style as a treatment effect. Before trusting
 any arm, check that more than one reasonable correct implementation passes.
 
+## The second fixture: `unsettled-void`
+
+The first fixture could not detect an effect — its answer was derivable from the code, so both
+arms solved it and the null said nothing about memory. This one asks for something the repo does
+not encode.
+
+| element | choice |
+|---|---|
+| task | make `cancel_order` work for a charge that has not settled |
+| the trap | refund it — which is what the existing code does for settled charges, so it is the natural extension |
+| the correct answer | reverse the authorization |
+| where the fact lives | **the memory.** Nothing in the code says a refund on an unsettled charge is refused |
+
+The fixture's provider stub accepts anything, so **the trap makes the visible suite GREEN**. That
+is the point: the tests cannot tell the two apart, so the memory is the only signal that can.
+
+The measurement is a **probe**, not a regex. `fixtures/unsettled-void/probe.py` patches the
+provider to behave like the real one — a refund on an unsettled charge is rejected — then runs the
+arm's own code and reports what happened. It is behavioural, so a solution that catches the
+rejection and falls back still counts: it works in production.
+
+The dry run asserts four properties, and the first three are worthless without the fourth:
+
+- the arms differ only by the memory
+- the untouched fixture fails (so there is a task)
+- **both** hand-written implementations pass the visible suite (the fixture has power)
+- the probe labels the hand-written correct and trap implementations correctly (the ruler works)
+
+Known limitation, stated rather than hidden: the probe exercises the **unsettled** path only. An
+implementation that voided a *settled* charge would score as correct here. `results.json` keeps each
+run's source (`primary_src`), so that is checkable after the fact rather than assumed away.
+
 ## Results so far
 
 Fixture: `idempotent-refund`. Task: make retried refunds idempotent. Outcome: does `refund()`
@@ -131,7 +163,7 @@ What the experiment did establish, at full strength:
 - A gate that reports GREEN can be checking nothing at all — the trial is what surfaced the
   `--since` and path-relativity fail-opens fixed in v0.4.1.
 
-## What a fixture with power would look like
+## What a fixture with power looks like
 
 The discriminating task must ask for something **not derivable from the repo** — a fact about
 the outside world, which is the only thing institutional memory adds that reading the code
@@ -142,9 +174,61 @@ cannot:
 - Two repo-consistent options where the wrong one is the one a reasonable engineer picks, and
   the memory is the only tiebreaker.
 
-Not yet built. It is deliberately not built as an arbitrary number chosen to make the memory
-look necessary: a rigged fixture would spend the one asset that makes this project worth
-anything.
+`unsettled-void` is that fixture, and it is built: see the result above. It is not an arbitrary
+number chosen to make the memory look necessary — the provider rule is real, the trap is the
+change a reasonable engineer makes, and both implementations leave the visible suite green. A
+rigged fixture would spend the one asset that makes this project worth anything.
+
+## Result: `unsettled-void`
+
+One model (`openai/gpt-4o`), one fixture, one task. The outcome is measured by the probe, not
+read from the source: did the arm's own code actually return the customer's money against a
+provider that behaves like the real one?
+
+| arm | runs | suite green | chose correct | chose the trap | trap rate |
+|---|---|---|---|---|---|
+| with memory | 22 | 21 | 20 | 2 | 9% |
+| no memory | 7 | 7 | 3 | 4 | 57% |
+
+Fisher exact, two-sided: **p = 0.018**.
+
+The visible suite was green in 21 of the 22 memory runs and all 7 control runs, and it was green
+in **every** run that mattered here: the trap runs it fails to catch are exactly the ones where
+the agent shipped something that breaks in production. The tests cannot see the difference, the
+memory is the only signal that can, and it moved the trap rate from 4-in-7 to 2-in-22.
+
+**This is preliminary, and the reason matters.** The memory arm reached n=22 across two sittings;
+the control arm reached only n=7 because the gateway account ran out of credit mid-run (HTTP 402)
+and the rest of the control arm could not be collected. A large effect can reach significance on
+a small control arm — that is what happened — but the control arm is the weaker half of this
+table, and the honest statement is "preliminary, pending a full control arm", not "p = 0.018,
+done".
+
+Two things the run established beyond the number:
+
+- **The compiled block works through its title alone.** `read_memory` was false in every single
+  run — neither arm ever opened `.memory/`. Arm A's `AGENTS.md` says only *"Refunding an
+  unsettled charge is refused by the provider"* plus a pointer to `.memory/dead-ends.md`, and
+  that title was enough to steer the agent off the trap, because the alternative was discoverable
+  in the provider module the agent did read. The fix does not have to be inlined for the warning
+  to land.
+- **The instrument, not the model, was the first thing to fail.**
+
+### Three instrument failures that each looked like a finding
+
+Recorded because each one, published, would have been a confident wrong answer:
+
+1. **10 of 12 runs "invalid" was the harness, not the model.** The contract never said how to put
+   a multi-line file inside a JSON string, so the model used a triple-quoted block with raw
+   newlines, which is not JSON. Three of those ended a run.
+2. **The fix for that made it worse.** Telling the model to "escape newlines as \n" made it
+   double-escape, so files landed with literal backslash-n and died on a `SyntaxError` that read
+   like the agent's own mistake.
+3. **A dead gateway looked like a slow model.** The account's 402 came back wrapped in a 502, and
+   502 is a retryable code, so every step retried nine times with backoff — about nine minutes
+   per step. The harness now detects a permanent upstream failure, names it, caps the retry
+   budget, and the runner aborts the trial instead of collecting more runs from a model it cannot
+   reach.
 
 ## Caveats
 
