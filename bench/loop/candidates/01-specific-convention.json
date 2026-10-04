@@ -1,0 +1,7 @@
+{
+  "type": "convention",
+  "title": "Reverse the authorization for a same-day cancellation",
+  "body": "Same-day cancellations must call void_authorization, not refund: the money has not moved yet, so there is nothing to refund.",
+  "anchor": "src/cancel.py",
+  "author": "payments"
+}

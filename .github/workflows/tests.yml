@@ -64,7 +64,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Syntax check the harness
-        run: python3 -m py_compile bench/harness.py bench/run_trial.py
+        run: python3 -m py_compile bench/harness.py bench/run_trial.py bench/loop.py
       - name: Build both arms and assert they differ only by the memory
         # Every fixture, not just the default one: a fixture whose arms differ by something
         # other than the memory measures the wrong variable, and that must fail here rather
@@ -74,6 +74,8 @@ jobs:
             echo "--- fixture: $f ---"
             python3 bench/run_trial.py --fixture "$f" --dry-run
           done
+      - name: Loop plumbing (no model calls)
+        run: python3 bench/loop.py --dry-run
 
   # The action is what strangers actually consume, so it is exercised the way a consumer
   # uses it: `uses: ./` resolves this repo's action.yml at the root, with no vendored copy.

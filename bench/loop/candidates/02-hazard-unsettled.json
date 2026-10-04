@@ -1,0 +1,9 @@
+{
+  "type": "hazard",
+  "title": "cancel_order must not refund an unsettled charge",
+  "body": "The provider rejects it with not_settled and the customer is left uncancelled.",
+  "anchor": "src/cancel.py",
+  "owner": "payments",
+  "enforcement": "tests/test_cancel.py",
+  "author": "payments"
+}

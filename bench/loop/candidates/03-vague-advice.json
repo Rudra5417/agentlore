@@ -1,0 +1,7 @@
+{
+  "type": "convention",
+  "title": "Be careful with payment edge cases",
+  "body": "Payments have edge cases. Think carefully and be thorough.",
+  "anchor": "src/",
+  "author": "payments"
+}

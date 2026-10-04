@@ -1081,6 +1081,43 @@ class TestIdResolution(Base):
         self.assertIn("no memory with id", out)
 
 
+class TestLoopCannotEditItsExam(unittest.TestCase):
+    """The memory loop's only real safety property: it cannot move what measures it.
+
+    Tested by handing the guard a snapshot that disagrees with the filesystem, so the guard is
+    watched failing WITHOUT writing to the fixture it protects -- a test that edits the thing it
+    asserts on can leave the repo dirty and make its own failure unreproducible.
+    """
+
+    def _loop(self):
+        import importlib.util
+        path = Path(__file__).resolve().parent.parent / "bench" / "loop.py"
+        spec = importlib.util.spec_from_file_location("loopmod_under_test", path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_guard_fires_on_a_changed_exam_and_names_the_file(self):
+        m = self._loop()
+        before = m.exam_hashes()
+        victim = "bench/fixtures/unsettled-void/probe.py"
+        self.assertIn(victim, before, "the exam hash must cover the probe")
+        before[victim] = "0" * 64  # pretend the exam moved
+        with self.assertRaises(SystemExit) as cm:
+            m.assert_exam_untouched(before, "unit test")
+        self.assertIn(victim, str(cm.exception))
+
+    def test_guard_is_silent_when_the_exam_is_untouched(self):
+        m = self._loop()
+        m.assert_exam_untouched(m.exam_hashes(), "unit test")  # must not raise
+
+    def test_fisher_matches_a_hand_computed_case(self):
+        m = self._loop()
+        self.assertAlmostEqual(m.fisher(1, 6, 3, 6), 0.545, places=3)
+        self.assertEqual(m.fisher(0, 15, 0, 15), 1.0)   # no traps anywhere is not a win
+        self.assertLess(m.fisher(0, 15, 8, 15), 0.05)   # a real effect must read as one
+
+
 class TestShippedArtifactsStayInSync(Base):
     """Invariants about the FILES THIS REPO SHIPS, not about behaviour.
 

@@ -17,3 +17,10 @@ bench/logs/
 # Captured failure output from run_tests.py. Evidence for a flaky failure, not a fixture:
 # never committed, but never silently discarded either.
 .test-failures/
+# The memory loop's runtime state: arms it builds, gate scratch repos, and generated treatment
+# files. The candidates and the journal are the artifacts worth reviewing; the rest is output.
+bench/loop/work/
+bench/loop/runs/
+bench/loop/logs/
+bench/loop/gateruns/
+bench/loop/gatelogs/

@@ -44,13 +44,30 @@ def load_fixture(name):
     if not FIXTURE.is_dir():
         raise SystemExit("no such fixture: %s (have: %s)"
                          % (name, ", ".join(sorted(x.name for x in (HERE / "fixtures").iterdir()))))
+    if (FIXTURE / "memory.json").exists() and MEMORY is None:
+        pass
     if (FIXTURE / "probe.py").exists():
         sys.path.insert(0, str(FIXTURE))
         import probe as _probe
         PROBE = _probe
-RUNS = HERE / "runs"
-LOGS = HERE / "logs"
+# Overridable so a second caller (the loop) can run without clearing this one's artifacts:
+# a shared logs dir means whoever starts second deletes the other's evidence.
+RUNS = Path(os.environ.get("BENCH_RUNS_DIR", HERE / "runs"))
+LOGS = Path(os.environ.get("BENCH_LOGS_DIR", HERE / "logs"))
+MEMORY = None  # the treatment, set from --memory
 HARNESS = HERE / "harness.py"
+
+
+def load_memory():
+    """The treatment: one entry, or a list of them.
+
+    It lives in a file rather than inside the fixture because the fixture is the exam. A loop
+    that can edit its own exam is not improving, it is grading itself -- so the memory is an
+    input the loop may vary, and everything else is hashed and checked.
+    """
+    src = MEMORY or (FIXTURE / "memory.json")
+    data = json.loads(Path(src).read_text())
+    return data if isinstance(data, list) else [data]
 
 
 def build_arm(arm: str, dest: Path) -> None:
@@ -72,15 +89,20 @@ def build_arm(arm: str, dest: Path) -> None:
     if arm != "A":
         return
 
-    mem = json.loads((FIXTURE / "memory.json").read_text())
     rmem = str(REPO / "rmem")
-    for cmd in (
-        [rmem, "init"],
-        [rmem, "add", "--type", mem["type"], "--title", mem["title"], "--body", mem["body"],
-         "--anchor", mem["anchor"], "--evidence", mem["evidence"], "--author", mem["author"]],
-        [rmem, "index"],
-        [rmem, "compile"],
-    ):
+    cmds = [[rmem, "init"]]
+    for mem in load_memory():
+        cmd = [rmem, "add", "--type", mem["type"], "--title", mem["title"]]
+        for flag, key in (("--body", "body"), ("--anchor", "anchor"), ("--evidence", "evidence"),
+                          ("--owner", "owner"), ("--enforcement", "enforcement"),
+                          ("--key", "key"), ("--value", "value"), ("--author", "author")):
+            if mem.get(key):
+                cmd += [flag, str(mem[key])]
+        if mem.get("type") == "dead-end" and not mem.get("evidence"):
+            cmd += ["--evidence", "n/a"]
+        cmds.append(cmd)
+    cmds += [[rmem, "index"], [rmem, "compile"]]
+    for cmd in cmds:
         r = subprocess.run(cmd, cwd=dest, capture_output=True, text=True)
         if r.returncode != 0:
             raise SystemExit(f"seeding arm A failed: {' '.join(cmd)}\n{r.stdout}{r.stderr}")
@@ -302,10 +324,14 @@ def main():
     ap.add_argument("--arms", default="A,B")
     ap.add_argument("--fixture", default=DEFAULT_FIXTURE)
     ap.add_argument("--max-steps", default="20")
+    ap.add_argument("--memory", default=None,
+                    help="treatment file: one memory entry or a list (default: the fixture's)")
     ap.add_argument("--dry-run", action="store_true",
                     help="build both arms and verify they differ only by memory; no model calls")
     a = ap.parse_args()
 
+    global MEMORY
+    MEMORY = a.memory
     load_fixture(a.fixture)
     task = (FIXTURE / "task.txt").read_text().strip()
     print("fixture: %s%s" % (a.fixture, "  (probe: behavioural)" if PROBE else "  (classifier: source)"))
