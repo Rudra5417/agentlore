@@ -9,8 +9,8 @@ exists to be trusted, so a reproducible wrong answer is worth more than a featur
 One file, Python standard library, no dependencies. Nothing to install:
 
 ```bash
-git clone https://github.com/Rudra5417/rmem
-cd rmem
+git clone https://github.com/Rudra5417/agentlore
+cd agentlore
 python3 run_tests.py                 # the suite, ~35s
 python3 run_tests.py -k subdirectory # a subset
 ```
@@ -40,10 +40,10 @@ you measure is not the one you think. See [bench/README.md](bench/README.md).
 
 ## Changing a check
 
-`rmem check` runs 18 checks and prints `MEMORY-HEALTH: N/N GREEN`. If you add one:
+`agentlore check` runs 18 checks and prints `MEMORY-HEALTH: N/N GREEN`. If you add one:
 
 1. Add the check, and make its failure message name the fix.
-2. Update the count assertion in `tests/test_rmem.py`.
+2. Update the count assertion in `tests/test_agentlore.py`.
 3. Update the table in `README.md`, and the count in `run_tests.py`'s neighbours if it appears.
 4. If it belongs in the action, wire the input in `action.yml` and add a job to
    `.github/workflows/tests.yml` that proves it fires **and** that it passes when it should.
@@ -52,14 +52,14 @@ A check nobody has watched fail is decoration.
 
 ## Vendored copies
 
-`examples/billing-service/tools/rmem` is a byte-for-byte copy of the root `rmem`, and the suite
+`examples/billing-service/tools/agentlore` is a byte-for-byte copy of the root `agentlore`, and the suite
 asserts that. After changing the tool:
 
 ```bash
-cp rmem examples/billing-service/tools/rmem
+cp agentlore examples/billing-service/tools/agentlore
 ```
 
-The same test asserts each example's committed `AGENTS.md` matches `rmem compile` output. Both
+The same test asserts each example's committed `AGENTS.md` matches `agentlore compile` output. Both
 exist because a stale generated file once went red in CI for three pushes unnoticed.
 
 ## Pull requests
@@ -84,5 +84,5 @@ FAKE_AWS_KEY = "AKIA" + "IOSFODNN7EXAMPLE"
 ## Reporting a vulnerability
 
 Please do not open a public issue — use
-[private vulnerability reporting](https://github.com/Rudra5417/rmem/security/advisories/new).
+[private vulnerability reporting](https://github.com/Rudra5417/agentlore/security/advisories/new).
 See [SECURITY.md](SECURITY.md).

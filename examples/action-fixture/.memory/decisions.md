@@ -1,9 +1,9 @@
 # Decisions
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->
 
 ## All work goes through thing()
-<!-- rmem
+<!-- agentlore
 id: DEC-2026-09-28-15c8
 type: decision
 status: accepted

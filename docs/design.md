@@ -2,7 +2,7 @@
 
 > The rules the tool is built on, the checks it runs, and why accuracy is the gap nobody else closes.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Three rules the design is built on
 
@@ -87,5 +87,5 @@ after:   ## The refund window rejects credit notes too (settled)   <- the tool n
 Agents read the markdown directly and the heading is the first thing they see, so an honest
 body does not protect them. A gate can force an agent to *state* something; it cannot make an
 agent reword a title it has already chosen. So the tool rewrites the heading itself —
-`rmem add|verify --resolved-by` appends ` (settled)`, idempotently.
+`agentlore add|verify --resolved-by` appends ` (settled)`, idempotently.
 

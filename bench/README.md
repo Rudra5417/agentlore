@@ -1,6 +1,6 @@
 # bench — measuring whether repo memory changes agent behaviour
 
-`rmem`'s central claim is that recording decisions, dead ends, and house rules in the repo
+`agentlore`'s central claim is that recording decisions, dead ends, and house rules in the repo
 makes coding agents do better work. That claim is testable, so it is tested here rather than
 asserted. The harness, the fixture, and the method are all in this directory, because a
 measurement you cannot re-run is not evidence.

@@ -1,10 +1,10 @@
-# rmem — git-reviewable repo memory for coding agents
+# agentlore — git-reviewable repo memory for coding agents
 
 Prototype v0.1.0. One file, stdlib only, no dependencies.
 
 **The idea in one line:** coding agents forget everything between sessions, and the
 facts worth keeping — decisions, dead ends, house rules — live in people's heads.
-`rmem` lets the agent write them into the repo, as normal files, so they show up as
+`agentlore` lets the agent write them into the repo, as normal files, so they show up as
 a **diff in the pull request that motivated them**. Teammates review memory like code.
 
 ## Three rules the design is built on
@@ -24,16 +24,16 @@ a **diff in the pull request that motivated them**. Teammates review memory like
 ## Use
 
 ```sh
-rmem init                                  # create .memory/, gitignore the index
-rmem add --type dead-end --title "..." --body "..." \
+agentlore init                                  # create .memory/, gitignore the index
+agentlore add --type dead-end --title "..." --body "..." \
          --anchor "src/api/**" --evidence "PR #4821 - double-charge incident"
-rmem check                                 # MEMORY-HEALTH report; exit 1 when broken
-rmem check --brief                         # one line, for session start
-rmem recall "add a new payment provider"   # bounded context block for a task
-rmem compile                               # emit conventions into AGENTS.md
-rmem supersede <old-id> <new-id>           # retire a memory that is no longer true
-rmem verify <id> [--anchor glob]           # "still true" — re-stamp / narrow scope
-rmem list
+agentlore check                                 # MEMORY-HEALTH report; exit 1 when broken
+agentlore check --brief                         # one line, for session start
+agentlore recall "add a new payment provider"   # bounded context block for a task
+agentlore compile                               # emit conventions into AGENTS.md
+agentlore supersede <old-id> <new-id>           # retire a memory that is no longer true
+agentlore verify <id> [--anchor glob]           # "still true" — re-stamp / narrow scope
+agentlore list
 ```
 
 Types: `decision`, `dead-end`, `convention`.
@@ -67,7 +67,7 @@ Without these, the gate is just nagging and teams disable it.
 ## How this differs from what already exists
 
 * **AGENTS.md / CLAUDE.md** — plain prose, hand-written, loaded in full every session, and
-  it rots silently. `rmem compile` feeds it: typed fragments are the source, AGENTS.md is a
+  it rots silently. `agentlore compile` feeds it: typed fragments are the source, AGENTS.md is a
   build target, so nothing has to change its read path.
 * **mem0 / claude-mem / OpenMemory** — auto-capture into an opaque store. Not reviewable,
   not shared ground truth, not versioned with the code.
@@ -85,10 +85,10 @@ Without these, the gate is just nagging and teams disable it.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0     # only improves the message; drift detection is content-based
-      - run: python3 tools/rmem index            # the index is derived; CI rebuilds it
-      - run: python3 tools/rmem check --github   # exit 1 -> the PR is blocked
+      - run: python3 tools/agentlore index            # the index is derived; CI rebuilds it
+      - run: python3 tools/agentlore check --github   # exit 1 -> the PR is blocked
       - run: |
-          python3 tools/rmem compile
+          python3 tools/agentlore compile
           git diff --exit-code AGENTS.md         # committed AGENTS.md must match conventions.md
 ```
 
@@ -105,8 +105,8 @@ it green.
 
 * **Staleness is a content hash, not AST-aware.** Reformatting an anchored file marks the
   memory stale. `fiberplane/drift` normalizes via tree-sitter and is the right upgrade.
-* No `rmem rm` — removing an entry means editing the markdown by hand.
+* No `agentlore rm` — removing an entry means editing the markdown by hand.
 * Retrieval is term-overlap scoring, not semantic. Fine under ~100 entries; FTS5 is available.
-* The Action expects `rmem` vendored at `tools/rmem`. A published action is the real fix.
+* The Action expects `agentlore` vendored at `tools/agentlore`. A published action is the real fix.
 * Anchors that are too broad (`src/**`) generate noise. There is no lint for that yet —
   arguably there should be, and it is probably the next check worth writing.

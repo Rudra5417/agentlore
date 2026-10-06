@@ -2,7 +2,7 @@
 
 > A hazard is a pointer to a control, not a control. What the type can and cannot do.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Hazards: "don't touch billing"
 
@@ -10,11 +10,11 @@ This is the type that shows what memory can and cannot carry.
 
 **A hazard is not an enforcement mechanism.** A markdown file cannot stop an agent editing a
 directory. CODEOWNERS, branch protection and permissions do that, and any org that genuinely
-means "don't touch billing" already uses one of them. So `rmem` does not pretend to hold the
+means "don't touch billing" already uses one of them. So `agentlore` does not pretend to hold the
 policy — it holds the **pointer**:
 
 ```sh
-rmem add --type hazard --title "Billing ledger is frozen pending audit" \
+agentlore add --type hazard --title "Billing ledger is frozen pending audit" \
          --anchor 'src/billing/**' --owner '@epic/payments-team' \
          --enforcement 'CODEOWNERS'
 ```

@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        This is the most valuable report this project can receive. `rmem` exists to be trusted, so
+        This is the most valuable report this project can receive. `agentlore` exists to be trusted, so
         a reproducible wrong answer is worth more than any feature request.
 
         Please fill in enough that it can be reproduced exactly. If you cannot share your repo,
@@ -39,18 +39,18 @@ body:
       description: The smallest sequence of commands that shows it, from a clean state.
       render: shell
       placeholder: |
-        rmem init
-        rmem add --type dead-end ... 
+        agentlore init
+        agentlore add --type dead-end ... 
         git commit -am code
-        rmem check --brief
+        agentlore check --brief
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: Version
-      description: Output of `rmem --version`.
-      placeholder: rmem 0.7.1
+      description: Output of `agentlore --version`.
+      placeholder: agentlore 0.7.1
     validations:
       required: true
   - type: input
@@ -75,6 +75,6 @@ body:
     attributes:
       label: Full output
       render: shell
-      description: "`rmem check` (not `--brief`), with anything sensitive redacted."
+      description: "`agentlore check` (not `--brief`), with anything sensitive redacted."
     validations:
       required: false

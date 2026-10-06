@@ -1,9 +1,9 @@
 # Dead ends
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->
 
 ## Direct provider SDK calls from handlers
-<!-- rmem
+<!-- agentlore
 id: DEAD-2026-09-27-784d
 type: dead-end
 status: accepted
@@ -18,7 +18,7 @@ anchor_hash: f2f5c3062e2a8e0e
 We tried calling the provider SDK straight from the API handlers to shave a hop. Rejected: retries duplicated, idempotency keys missing, double-charges in prod.
 
 ## The 409 fallback to a credit note loops (settled)
-<!-- rmem
+<!-- agentlore
 id: DEAD-2026-09-28-8613
 type: dead-end
 status: accepted

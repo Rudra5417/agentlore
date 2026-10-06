@@ -2,7 +2,7 @@
 
 > What testing actually showed, what it did not, and the suite that pins the invariants.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Evidence: what testing actually showed
 
@@ -16,7 +16,7 @@ not.**
 | memory can be recorded, anchored, and versioned in the repo | **proven** | 108 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: `memory-health: failure`, two annotations, then `success` when the same PR resolved it |
-| an ambiguous id, or an unresolvable `--since`, **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `rmem verify 2026` exits 1 and changes nothing |
+| an ambiguous id, or an unresolvable `--since`, **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `agentlore verify 2026` exits 1 and changes nothing |
 | decided contradictions are caught | **proven, narrowly** | shared claim key + divergent value only; prose-vs-prose is deliberately out of scope |
 | every host reads the compiled memory | **mixed** | [INTEGRATION.md](../INTEGRATION.md): most do; Gemini CLI needs config; all have truncation caps that silently drop the tail |
 | **memory makes an agent do better work** | **unproven** | [bench/](../bench/README.md): a real null — and that fixture had no power to detect one |
@@ -110,7 +110,7 @@ It pins the invariants that caught real bugs:
   fetched, `github.event.before` on a new branch) fails the gate instead of silently
   switching dead-ends-settled off; a resolvable one still passes, and the arm-4 shape is
   exercised end to end through the real `--since <base-sha>` path
-- **CLI robustness** — `rmem list | head` does not dump a stack trace
+- **CLI robustness** — `agentlore list | head` does not dump a stack trace
 
 CI runs the suite on Python 3.9 and 3.12, then runs the shipped example through its own memory
 gate and asserts the vendored copy still matches the tool at the root.

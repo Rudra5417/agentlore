@@ -89,10 +89,10 @@ def build_arm(arm: str, dest: Path) -> None:
     if arm != "A":
         return
 
-    rmem = str(REPO / "rmem")
-    cmds = [[rmem, "init"]]
+    agentlore = str(REPO / "agentlore")
+    cmds = [[agentlore, "init"]]
     for mem in load_memory():
-        cmd = [rmem, "add", "--type", mem["type"], "--title", mem["title"]]
+        cmd = [agentlore, "add", "--type", mem["type"], "--title", mem["title"]]
         for flag, key in (("--body", "body"), ("--anchor", "anchor"), ("--evidence", "evidence"),
                           ("--owner", "owner"), ("--enforcement", "enforcement"),
                           ("--key", "key"), ("--value", "value"), ("--author", "author")):
@@ -101,7 +101,7 @@ def build_arm(arm: str, dest: Path) -> None:
         if mem.get("type") == "dead-end" and not mem.get("evidence"):
             cmd += ["--evidence", "n/a"]
         cmds.append(cmd)
-    cmds += [[rmem, "index"], [rmem, "compile"]]
+    cmds += [[agentlore, "index"], [agentlore, "compile"]]
     for cmd in cmds:
         r = subprocess.run(cmd, cwd=dest, capture_output=True, text=True)
         if r.returncode != 0:
@@ -369,7 +369,7 @@ def main():
             raise SystemExit("DRY RUN FAILED: shared files differ between arms: %s" % changed)
         print("  OK: arms are identical apart from the memory")
         check_fixture_validity()
-        r = subprocess.run([sys.executable, str(REPO / "rmem"), "check", "--brief"],
+        r = subprocess.run([sys.executable, str(REPO / "agentlore"), "check", "--brief"],
                            cwd=RUNS / "dryA", capture_output=True, text=True)
         print("arm A gate:", (r.stdout + r.stderr).strip())
         return

@@ -1,5 +1,5 @@
 {
-  "_note": "Seeded into arm A with `rmem add`. Arm B is byte-identical minus .memory/ and AGENTS.md.",
+  "_note": "Seeded into arm A with `agentlore add`. Arm B is byte-identical minus .memory/ and AGENTS.md.",
   "type": "dead-end",
   "title": "Idempotency keyed on (order, amount) swallows the second refund",
   "body": "Tried before and rejected. Partial refunds legitimately share an order and can share an amount, so keying idempotency on (order_id, amount_cents) silently swallows the second legitimate refund -- the customer is left short and nothing errors. Key on the client-supplied request_id instead: it is stable across retries and unique per request. Use instead: request_id.",

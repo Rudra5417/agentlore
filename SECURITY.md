@@ -2,7 +2,7 @@
 
 ## Reporting a vulnerability
 
-Use GitHub's [private vulnerability reporting](https://github.com/Rudra5417/rmem/security/advisories/new).
+Use GitHub's [private vulnerability reporting](https://github.com/Rudra5417/agentlore/security/advisories/new).
 Please do not open a public issue for a security problem.
 
 This is a solo-maintained project, so there is no formal SLA — but a security report is the one
@@ -18,11 +18,11 @@ backports, and tagging a release does not create a supported branch.
 
 ## What this tool actually does, so you can judge its attack surface
 
-`rmem` is a single Python file using only the standard library. It:
+`agentlore` is a single Python file using only the standard library. It:
 
 - **reads** the files your memories are anchored to, to fingerprint them;
 - **writes** `.memory/*.md` and `AGENTS.md`;
-- **runs** in CI as a composite action (`python3 rmem index` then `python3 rmem check`).
+- **runs** in CI as a composite action (`python3 agentlore index` then `python3 agentlore check`).
 
 No network access, no telemetry, no subprocess except `git` for diff and revision information.
 It reads no environment secrets and has no credentials of its own.
@@ -35,7 +35,7 @@ That makes a memory a **prompt-injection channel**: a `.memory/` entry that read
 previous instructions and …" is not a note, it is an attack — and it arrives through a pull
 request, which is a path a reviewer may treat as prose rather than as executable instruction.
 
-`rmem` defends against this in one narrow way, and not in the important one. The gate's
+`agentlore` defends against this in one narrow way, and not in the important one. The gate's
 `no-agent-directives` check refuses memory that tells the agent to conceal something from the
 people reviewing it, to ignore its instructions, to skip this gate, to handle credentials, or to
 weaken a platform control: directives with no legitimate reading in a repo memory, or none that

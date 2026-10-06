@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlore"
+version = "0.9.0"
+description = "Git-reviewable repo memory for coding agents: typed decisions, dead ends, conventions and hazards, landed as a diff in the PR that motivated them, with a CI gate that fails when memory rots."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Rudra Patel", email = "60398030+Rudra5417@users.noreply.github.com" }]
+keywords = [
+  "agents-md",
+  "ai-agents",
+  "ci",
+  "cli",
+  "code-review",
+  "coding-agents",
+  "developer-experience",
+  "developer-tools",
+  "documentation",
+  "github-actions",
+  "llm",
+  "memory",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Quality Assurance",
+  "Topic :: Software Development :: Version Control :: Git",
+]
+
+[project.urls]
+Homepage = "https://github.com/Rudra5417/agentlore"
+Repository = "https://github.com/Rudra5417/agentlore"
+Changelog = "https://github.com/Rudra5417/agentlore/blob/main/CHANGELOG.md"
+Issues = "https://github.com/Rudra5417/agentlore/issues"
+Documentation = "https://github.com/Rudra5417/agentlore/blob/main/INTEGRATION.md"
+
+# The canonical artifact stays the single, self-contained, zero-dependency
+# `agentlore` file. The package is a wrapper around it, not a replacement:
+# `uv tool install agentlore` / `pipx install agentlore` install the same file.
+[tool.setuptools]
+script-files = ["agentlore"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test suite for rmem.
+"""Test suite for agentlore.
 
 Stdlib only, matching the tool itself -- no pytest, no fixtures library.
 
@@ -24,7 +24,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-TOOL = Path(__file__).resolve().parent.parent / "rmem"
+TOOL = Path(__file__).resolve().parent.parent / "agentlore"
 
 BASE_FILES = {
     "src/billing/charge.py": "def charge():\n    return 1\n",
@@ -35,10 +35,10 @@ BASE_FILES = {
 
 
 class Fixture:
-    """A throwaway git repo with rmem running against it."""
+    """A throwaway git repo with agentlore running against it."""
 
     def __init__(self, files=None):
-        self.dir = Path(tempfile.mkdtemp(prefix="rmem-test-"))
+        self.dir = Path(tempfile.mkdtemp(prefix="agentlore-test-"))
         self.git("init", "-q", "-b", "main")
         self.git("config", "user.email", "test@example.invalid")
         self.git("config", "user.name", "Test")
@@ -66,7 +66,7 @@ class Fixture:
         self.git("add", "-A")
         self.git("commit", "-q", "-m", message)
 
-    def rmem(self, *args, cwd=None):
+    def agentlore(self, *args, cwd=None):
         r = subprocess.run([sys.executable, str(TOOL), *args],
                            cwd=(self.dir / cwd) if cwd else self.dir,
                            capture_output=True, text=True)
@@ -75,20 +75,20 @@ class Fixture:
     # ------------------------------------------------------------------- verbs
 
     def init(self):
-        code, out = self.rmem("init")
-        assert code == 0, "rmem init failed:\n" + out
+        code, out = self.agentlore("init")
+        assert code == 0, "agentlore init failed:\n" + out
         return out
 
     def add(self, *args):
         """Returns the new memory id (asserting the write succeeded)."""
-        code, out = self.rmem("add", *args)
+        code, out = self.agentlore("add", *args)
         m = re.search(r"added (\S+) \(", out)
-        assert code == 0 and m, "rmem add failed:\n" + out
+        assert code == 0 and m, "agentlore add failed:\n" + out
         return m.group(1)
 
     def health(self):
         """Parse `check --brief` into a dict. Never raises on BROKEN."""
-        code, out = self.rmem("check", "--brief")
+        code, out = self.agentlore("check", "--brief")
         first = out.strip().splitlines()[0]
         m = re.match(r"MEMORY-HEALTH: (\d+)/(\d+) (GREEN|BROKEN)(?: -- (.*))?$", first)
         assert m, "unparseable health line: %r" % first
@@ -103,7 +103,7 @@ class Fixture:
         }
 
     def check_full(self):
-        return self.rmem("check")
+        return self.agentlore("check")
 
     def cleanup(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -150,7 +150,7 @@ class TestBaseline(Base):
     def test_unstamped_repo_fails_index_checks(self):
         f = Fixture(BASE_FILES)
         try:
-            code, out = f.rmem("check", "--brief")
+            code, out = f.agentlore("check", "--brief")
             self.assertEqual(code, 1)
             self.assertIn("no .memory/", out)
         finally:
@@ -166,7 +166,7 @@ class TestFailClosed(Base):
         text = self.f.read(".memory/conventions.md")
         text = re.sub(r"(?m)^anchor_hash:.*\n", "", text)
         self.f.write(".memory/conventions.md", text)
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-stamped")
 
     def test_index_stale_when_markdown_edited_without_rebuild(self):
@@ -183,11 +183,11 @@ class TestFailClosed(Base):
         text = self.f.read(".memory/conventions.md")
         text = re.sub(r"(?m)^verified_at:.*$", "verified_at: 0000000", text)
         self.f.write(".memory/conventions.md", text)
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertGreen()
 
         self.f.write("src/billing/charge.py", "def charge():\n    return 99\n")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-not-stale")
 
 
@@ -198,7 +198,7 @@ class TestAnchorsResolve(Base):
         self.f.add("--type", "decision", "--title", "Users API shape",
                    "--anchor", "src/api/**", "--author", "test")
         (self.f.dir / "src/api/handlers/users.py").unlink()
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-resolve")
 
     def test_empty_leftover_directory_does_not_satisfy_an_anchor(self):
@@ -208,7 +208,7 @@ class TestAnchorsResolve(Base):
                    "--anchor", "src/api/**", "--author", "test")
         (self.f.dir / "src/api/handlers/users.py").unlink()
         self.assertTrue((self.f.dir / "src/api/handlers").is_dir(), "fixture assumption")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-resolve")
 
     def test_live_anchors_are_not_flagged(self):
@@ -221,12 +221,12 @@ class TestAnchorsResolve(Base):
         self.f.commit("wide")
         # a change anywhere now marks the broad memory stale
         self.f.write("src/api/handlers/users.py", "def users():\n    return [1]\n")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-not-stale")
 
-        code, out = self.f.rmem("verify", wide, "--anchor", "src/api/**")
+        code, out = self.f.agentlore("verify", wide, "--anchor", "src/api/**")
         self.assertEqual(code, 0, out)
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertNotIn("anchors-not-stale", self.f.health()["failed"])
 
 
@@ -263,9 +263,9 @@ class TestSupersede(Base):
                          "--anchor", "src/billing/**", "--author", "test")
         self.f.commit("two decisions")
 
-        code, out = self.f.rmem("supersede", old, new)
+        code, out = self.f.agentlore("supersede", old, new)
         self.assertEqual(code, 0, out)
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
         text = self.f.read(".memory/decisions.md")
         self.assertIn("(superseded)", text)
@@ -312,7 +312,7 @@ class TestDeadEnds(Base):
                          "--evidence", "ProviderError(409, 'beyond the refund window')",
                          "--resolved-by", "this change un-windowed credit_note",
                          "--author", "test")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertNotIn("dead-ends-settled", self.f.health()["failed"])
 
         # and the heading itself carries the fact, because agents read the markdown
@@ -324,9 +324,9 @@ class TestDeadEnds(Base):
         mem = self.f.add("--type", "dead-end", "--title", "Same wall twice",
                          "--anchor", "src/billing/**", "--evidence", "boom",
                          "--author", "test")
-        self.f.rmem("index")
-        self.f.rmem("verify", mem, "--resolved-by", "first")
-        self.f.rmem("verify", mem, "--resolved-by", "second")
+        self.f.agentlore("index")
+        self.f.agentlore("verify", mem, "--resolved-by", "first")
+        self.f.agentlore("verify", mem, "--resolved-by", "second")
         text = self.f.read(".memory/dead-ends.md")
         self.assertEqual(text.count("(settled)"), 1, text)
         self.assertNotIn("(settled) (settled)", text)
@@ -338,10 +338,10 @@ class TestDeadEnds(Base):
                    "--anchor", "src/billing/**", "--evidence", "dropped under load",
                    "--author", "test")
         self.f.commit("recorded the dead end")
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
         self.f.write("src/billing/charge.py", "def charge():\n    return 78\n")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         h = self.f.health()
         self.assertFails("anchors-not-stale", h)
         self.assertNotIn("dead-ends-settled", h["failed"])
@@ -404,7 +404,7 @@ class TestHazards(Base):
 
         self.f.write(".github/CODEOWNERS",
                      self.f.read(".github/CODEOWNERS") + "/src/api/**  @security-team\n")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertGreen()
 
     def test_hazard_passes_when_owner_and_rule_agree(self):
@@ -419,26 +419,26 @@ class TestHazards(Base):
 
 class TestCompile(Base):
     def test_compile_is_idempotent(self):
-        code, out = self.f.rmem("compile")
+        code, out = self.f.agentlore("compile")
         self.assertEqual(code, 0, out)
         first = self.f.read("AGENTS.md")
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         self.assertEqual(first, self.f.read("AGENTS.md"))
 
     def test_conventions_land_in_agents_md(self):
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         text = self.f.read("AGENTS.md")
         self.assertIn("## House rules", text)
         self.assertIn("Billing goes through the gateway", text)
-        self.assertIn("<!-- rmem:begin", text)
-        self.assertIn("<!-- rmem:end -->", text)
+        self.assertIn("<!-- agentlore:begin", text)
+        self.assertIn("<!-- agentlore:end -->", text)
 
     def test_hazards_compile_as_frozen_areas_naming_the_control(self):
         self.f.add("--type", "hazard", "--title", "Billing ledger is frozen",
                    "--body", "Audit pending.", "--anchor", "src/billing/**",
                    "--owner", "@payments-team", "--enforcement", "CODEOWNERS",
                    "--author", "test")
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         text = self.f.read("AGENTS.md")
         self.assertIn("### Frozen areas", text)
         self.assertIn("@payments-team", text)
@@ -446,7 +446,7 @@ class TestCompile(Base):
 
     def test_compile_preserves_surrounding_agents_md_content(self):
         self.f.write("AGENTS.md", "# AGENTS.md\n\n## Dev environment\n\n- Run: `python3 run_tests.py`\n")
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         text = self.f.read("AGENTS.md")
         self.assertIn("## Dev environment", text)
         self.assertIn("## House rules", text)
@@ -465,7 +465,7 @@ class TestOtherChecks(Base):
         text = self.f.read(".memory/conventions.md")
         entry = text[text.index("## "):]        # the whole entry, heading and fence
         self.f.write(".memory/conventions.md", text + "\n" + entry)
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("ids-unique")
 
 
@@ -476,11 +476,11 @@ class TestSupersededAreHistory(Base):
                          "--anchor", "src/nonexistent/**", "--author", "test")
         new = self.f.add("--type", "decision", "--title", "New billing rule",
                          "--anchor", "src/billing/**", "--author", "test")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-resolve")
 
-        self.f.rmem("supersede", old, new)
-        self.f.rmem("index")
+        self.f.agentlore("supersede", old, new)
+        self.f.agentlore("index")
         self.assertGreen()
 
 
@@ -508,7 +508,7 @@ class TestRetractAndRm(Base):
 
     def test_retract_keeps_the_text_and_labels_the_heading(self):
         _, b, _ = self.three_decisions()
-        code, out = self.f.rmem("retract", b, "--reason", "the agent inferred this")
+        code, out = self.f.agentlore("retract", b, "--reason", "the agent inferred this")
         self.assertEqual(code, 0, out)
 
         text = self.f.read(".memory/decisions.md")
@@ -520,14 +520,14 @@ class TestRetractAndRm(Base):
 
     def test_retract_without_a_reason_is_refused(self):
         _, b, _ = self.three_decisions()
-        code, out = self.f.rmem("retract", b)
+        code, out = self.f.agentlore("retract", b)
         self.assertNotEqual(code, 0, "a silent disappearance must not be possible")
         self.assertIn("reason", out.lower())
 
     def test_retract_is_idempotent_and_replaces_the_reason(self):
         _, b, _ = self.three_decisions()
-        self.f.rmem("retract", b, "--reason", "first")
-        self.f.rmem("retract", b, "--reason", "corrected")
+        self.f.agentlore("retract", b, "--reason", "first")
+        self.f.agentlore("retract", b, "--reason", "corrected")
         text = self.f.read(".memory/decisions.md")
         self.assertEqual(text.count("(retracted)"), 1, text)
         self.assertIn("retracted_reason: corrected", text)
@@ -540,22 +540,22 @@ class TestRetractAndRm(Base):
                          "--body", "handlers are one-per-resource",
                          "--anchor", "src/api/**", "--author", "test")
         self.f.commit("api decision")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertGreen()
 
         (self.f.dir / "src/api/handlers/users.py").unlink()
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("anchors-resolve")          # it really is a live obligation
 
-        self.f.rmem("retract", mem, "--reason", "wrong from the start")
-        self.f.rmem("index")
+        self.f.agentlore("retract", mem, "--reason", "wrong from the start")
+        self.f.agentlore("index")
         self.assertGreen()                           # and now it is not
 
     # ------------------------------------------------------------------- rm
 
     def test_rm_removes_only_the_target_and_never_the_file_header(self):
         a, b, c = self.three_decisions()
-        code, out = self.f.rmem("rm", a)          # the FIRST entry: the header-eating case
+        code, out = self.f.agentlore("rm", a)          # the FIRST entry: the header-eating case
         self.assertEqual(code, 0, out)
 
         text = self.f.read(".memory/decisions.md")
@@ -569,17 +569,17 @@ class TestRetractAndRm(Base):
 
     def test_rm_leaves_a_parseable_file(self):
         a, _, _ = self.three_decisions()
-        self.f.rmem("rm", a)
-        self.f.rmem("index")
+        self.f.agentlore("rm", a)
+        self.f.agentlore("index")
         self.assertGreen()                       # index rebuilt and consistent
-        code, out = self.f.rmem("list")
+        code, out = self.f.agentlore("list")
         self.assertEqual(code, 0)
         self.assertNotIn("Alpha rule", out)
         self.assertIn("Bravo rule", out)
 
     def test_rm_reports_that_history_is_untouched(self):
         a, _, _ = self.three_decisions()
-        code, out = self.f.rmem("rm", a)
+        code, out = self.f.agentlore("rm", a)
         self.assertEqual(code, 0)
         low = out.lower()
         self.assertTrue("git log" in low or "clone" in low,
@@ -588,7 +588,7 @@ class TestRetractAndRm(Base):
 
     def test_rm_of_an_unknown_id_fails_loudly(self):
         self.three_decisions()
-        code, out = self.f.rmem("rm", "DEC-1970-01-01-nope")
+        code, out = self.f.agentlore("rm", "DEC-1970-01-01-nope")
         self.assertEqual(code, 1)
         self.assertIn("no memory with id", out)
 
@@ -616,7 +616,7 @@ class TestContradictions(Base):
         self.f.commit()
         self.assertFails("claims-agree")
         # both sides get named, and the tool refuses to choose for the reader
-        code, out = self.f.rmem("check")
+        code, out = self.f.agentlore("check")
         self.assertIn(a, out)
         self.assertIn(b, out)
         self.assertIn("will not pick a winner", out)
@@ -643,18 +643,18 @@ class TestContradictions(Base):
         a = self.claim("Refunds close at 90 days", "90")
         self.claim("Refunds close at 30 days", "30")
         self.f.commit()
-        self.f.rmem("supersede", a, "DEC-does-not-exist")
-        self.f.rmem("index")
+        self.f.agentlore("supersede", a, "DEC-does-not-exist")
+        self.f.agentlore("index")
         h = self.f.health()
         self.assertFails("supersedes-acyclic", h)
         self.assertNotIn("claims-agree", h["failed"], "the entry did get retired")
 
     def test_add_refuses_a_key_without_a_value_and_vice_versa(self):
-        code, out = self.f.rmem("add", "--type", "convention", "--title", "x",
+        code, out = self.f.agentlore("add", "--type", "convention", "--title", "x",
                                 "--key", "refund.window_days", "--author", "test")
         self.assertEqual(code, 1)
         self.assertIn("--value", out)
-        code, out = self.f.rmem("add", "--type", "convention", "--title", "x",
+        code, out = self.f.agentlore("add", "--type", "convention", "--title", "x",
                                 "--value", "90", "--author", "test")
         self.assertEqual(code, 1)
         self.assertIn("--key", out)
@@ -662,10 +662,10 @@ class TestContradictions(Base):
     def test_declaring_coexistence_requires_a_reason(self):
         """Silencing a conflict has to be attributable -- same rule as retract."""
         a = self.claim("Refunds close at 90 days", "90")
-        code, out = self.f.rmem("verify", a, "--coexists-with", "DEC-whatever")
+        code, out = self.f.agentlore("verify", a, "--coexists-with", "DEC-whatever")
         self.assertEqual(code, 1)
         self.assertIn("--coexists-why", out)
-        code, out = self.f.rmem("add", "--type", "convention", "--title", "y",
+        code, out = self.f.agentlore("add", "--type", "convention", "--title", "y",
                                 "--coexists-with", a, "--author", "test")
         self.assertEqual(code, 1)
         self.assertIn("--coexists-why", out)
@@ -677,13 +677,13 @@ class TestContradictions(Base):
         self.f.commit()
         self.assertFails("claims-agree")
 
-        code, out = self.f.rmem("verify", b, "--coexists-with", a,
+        code, out = self.f.agentlore("verify", b, "--coexists-with", a,
                                 "--coexists-why", "partner-tier contracts override it")
         self.assertEqual(code, 0, out)
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertGreen()
         # resolved, but NOT hidden: the deliberate disagreement stays visible
-        code, out = self.f.rmem("check")
+        code, out = self.f.agentlore("check")
         self.assertIn("declared coexistence", out)
         self.assertIn("partner-tier contracts override it", out)
 
@@ -691,16 +691,16 @@ class TestContradictions(Base):
         a = self.claim("Refunds close at 90 days", "90")
         b = self.claim("Refunds close at 30 days", "30")
         self.f.commit()
-        self.f.rmem("supersede", a, b)
-        self.f.rmem("index")
+        self.f.agentlore("supersede", a, b)
+        self.f.agentlore("index")
         self.assertGreen()
 
     def test_retracting_the_one_that_was_never_true_clears_it(self):
         a = self.claim("Refunds close at 90 days", "90")
         self.claim("Refunds close at 30 days", "30")
         self.f.commit()
-        self.f.rmem("retract", a, "--reason", "the window was never 90 days")
-        self.f.rmem("index")
+        self.f.agentlore("retract", a, "--reason", "the window was never 90 days")
+        self.f.agentlore("index")
         self.assertGreen()
 
     def test_key_without_a_value_is_a_notice_not_a_failure(self):
@@ -710,9 +710,9 @@ class TestContradictions(Base):
         p = self.f.dir / ".memory/conventions.md"
         p.write_text(p.read_text().replace("id: " + eid,
                                            "id: " + eid + "\nkey: orphan.key", 1))
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertGreen()
-        code, out = self.f.rmem("check")
+        code, out = self.f.agentlore("check")
         self.assertIn("no value", out)
 
 
@@ -732,20 +732,20 @@ class TestRetirementChains(Base):
         a = self.decision("First rule")
         b = self.decision("Second rule")
         self.f.commit()
-        self.f.rmem("supersede", a, b)
-        self.f.rmem("index")
+        self.f.agentlore("supersede", a, b)
+        self.f.agentlore("index")
         self.assertGreen()
 
     def test_a_chain_ending_on_a_retracted_memory_fails(self):
         a = self.decision("First rule")
         b = self.decision("Second rule")
         self.f.commit()
-        self.f.rmem("supersede", a, b)
-        self.f.rmem("retract", b, "--reason", "the second rule was wrong too")
-        self.f.rmem("index")
+        self.f.agentlore("supersede", a, b)
+        self.f.agentlore("retract", b, "--reason", "the second rule was wrong too")
+        self.f.agentlore("index")
         h = self.f.health()
         self.assertFails("supersedes-acyclic", h)
-        code, out = self.f.rmem("check")
+        code, out = self.f.agentlore("check")
         self.assertIn("itself retired", out)
 
     def test_a_cycle_fails_and_is_reported_once(self):
@@ -757,11 +757,11 @@ class TestRetirementChains(Base):
         t = t.replace("id: " + a, "id: " + a + "\nsuperseded_by: " + b, 1)
         t = t.replace("id: " + b, "id: " + b + "\nsuperseded_by: " + a, 1)
         p.write_text(t)
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
         h = self.f.health()
         self.assertFails("supersedes-acyclic", h)
-        code, out = self.f.rmem("check")
+        code, out = self.f.agentlore("check")
         self.assertEqual(out.count("a cycle"), 1, "a 2-cycle must be reported once:\n" + out)
 
 
@@ -775,25 +775,25 @@ class TestSinceBoundary(Base):
     """
 
     def test_an_unresolvable_since_fails_closed(self):
-        code, out = self.f.rmem("check", "--brief", "--since", "deadbeef")
+        code, out = self.f.agentlore("check", "--brief", "--since", "deadbeef")
         self.assertEqual(code, 1, "an unresolvable boundary must not go quiet:\n" + out)
         self.assertIn("dead-ends-settled", out)
 
     def test_an_all_zero_since_fails_closed(self):
         """`github.event.before` on a new branch push is 40 zeros -- a real-world input."""
-        code, out = self.f.rmem("check", "--brief", "--since", "0" * 40)
+        code, out = self.f.agentlore("check", "--brief", "--since", "0" * 40)
         self.assertEqual(code, 1, out)
 
     def test_a_resolvable_since_is_green(self):
-        code, out = self.f.rmem("check", "--brief", "--since", "HEAD")
+        code, out = self.f.agentlore("check", "--brief", "--since", "HEAD")
         self.assertEqual(code, 0, out)
 
     def test_no_since_at_all_is_still_green(self):
-        code, out = self.f.rmem("check", "--brief")
+        code, out = self.f.agentlore("check", "--brief")
         self.assertEqual(code, 0, out)
 
     def test_the_message_says_how_to_fix_it(self):
-        code, out = self.f.rmem("check", "--since", "deadbeef")
+        code, out = self.f.agentlore("check", "--since", "deadbeef")
         self.assertIn("does not resolve", out)
         self.assertIn("fetch-depth", out, "must name the actual CI fix:\n" + out)
 
@@ -811,9 +811,9 @@ class TestSinceBoundary(Base):
                          "--anchor", "src/billing/**", "--evidence", "observed in prod",
                          "--author", "test")
         self.f.commit("fix it and record it")
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
-        code, out = self.f.rmem("check", "--brief", "--since", base)
+        code, out = self.f.agentlore("check", "--brief", "--since", base)
         self.assertEqual(code, 1, "the gate must catch this:\n" + out)
         self.assertIn("dead-ends-settled", out)
         # the same change also staled the seeded convention: two different checks, two
@@ -821,10 +821,10 @@ class TestSinceBoundary(Base):
         self.assertIn("anchors-not-stale", out)
 
         # The in-PR resolution: the convention is still true, the dead end was settled here.
-        self.f.rmem("verify", self.conv)
-        self.f.rmem("verify", eid, "--resolved-by", "this change")
-        self.f.rmem("index")
-        code, out = self.f.rmem("check", "--brief", "--since", base)
+        self.f.agentlore("verify", self.conv)
+        self.f.agentlore("verify", eid, "--resolved-by", "this change")
+        self.f.agentlore("index")
+        code, out = self.f.agentlore("check", "--brief", "--since", base)
         self.assertEqual(code, 0, out)
 
 
@@ -842,38 +842,38 @@ class TestSubdirectoryLayout(Base):
         super().setUp()
         self.f.write("svc/src/billing/charge.py", "def charge():\n    return 1\n")
         self.f.commit("add the service")
-        code, out = self.f.rmem("init", cwd="svc")
+        code, out = self.f.agentlore("init", cwd="svc")
         self.assertEqual(code, 0, out)
         self.f.commit("init memory inside the service")
 
     def test_dead_ends_settled_fires_from_a_subdirectory(self):
         base = self.f.git("rev-parse", "HEAD").stdout.strip()
         self.f.write("svc/src/billing/charge.py", "def charge():\n    return 2\n")
-        code, out = self.f.rmem("add", "--type", "dead-end",
+        code, out = self.f.agentlore("add", "--type", "dead-end",
                                 "--title", "The window rejects credit notes too",
                                 "--body", "b", "--anchor", "src/billing/**",
                                 "--evidence", "observed in prod", "--author", "test",
                                 cwd="svc")
         self.assertEqual(code, 0, out)
         self.f.commit("fix it and record it in the same change")
-        self.f.rmem("index", cwd="svc")
+        self.f.agentlore("index", cwd="svc")
 
-        code, out = self.f.rmem("check", "--brief", "--since", base, cwd="svc")
+        code, out = self.f.agentlore("check", "--brief", "--since", base, cwd="svc")
         self.assertEqual(code, 1,
                          "dead-ends-settled went quiet: git paths are repo-root relative "
                          "while anchors are cwd relative.\n" + out)
         self.assertIn("dead-ends-settled", out)
 
     def test_the_stale_report_names_the_file_from_a_subdirectory(self):
-        self.f.rmem("add", "--type", "decision", "--title", "Gateway only",
+        self.f.agentlore("add", "--type", "decision", "--title", "Gateway only",
                     "--anchor", "src/billing/**", "--author", "test", cwd="svc")
-        self.f.rmem("index", cwd="svc")
+        self.f.agentlore("index", cwd="svc")
         self.f.commit("record the decision")
         self.f.write("svc/src/billing/charge.py", "def charge():\n    return 3\n")
         self.f.commit("move the code")
-        self.f.rmem("index", cwd="svc")
+        self.f.agentlore("index", cwd="svc")
 
-        code, out = self.f.rmem("check", cwd="svc")
+        code, out = self.f.agentlore("check", cwd="svc")
         self.assertEqual(code, 1, out)
         self.assertIn("src/billing/charge.py", out,
                       "the stale report should name the file, not fall back to "
@@ -882,9 +882,9 @@ class TestSubdirectoryLayout(Base):
 
 class TestCliRobustness(Base):
     def test_version_is_reported(self):
-        code, out = self.f.rmem("--version")
+        code, out = self.f.agentlore("--version")
         self.assertEqual(code, 0)
-        self.assertIn("rmem", out)
+        self.assertIn("agentlore", out)
 
     def test_readme_version_matches_the_tool(self):
         """Docs drift silently. The README states a version; the tool must agree.
@@ -899,7 +899,7 @@ class TestCliRobustness(Base):
         self.assertIsNotNone(m, "README should state the current release as **vX.Y.Z**")
         assert m is not None
         version = m.group(1)
-        code, out = self.f.rmem("--version")
+        code, out = self.f.agentlore("--version")
         self.assertIn(version, out,
                       "README says v%s but the tool reports %r" % (version, out.strip()))
 
@@ -911,7 +911,7 @@ class TestCliRobustness(Base):
         """
         readme = (TOOL.parent / "README.md").read_text()
         pinned = set(re.findall(
-            r"raw\.githubusercontent\.com/Rudra5417/rmem/v(\d+\.\d+\.\d+)/", readme))
+            r"raw\.githubusercontent\.com/Rudra5417/agentlore/v(\d+\.\d+\.\d+)/", readme))
         self.assertTrue(pinned, "expected at least one pinned install URL in the README")
         m = re.search(r"Current release \*\*v(\d+\.\d+\.\d+)\*\*", readme)
         self.assertIsNotNone(m, "README should state the current release as **vX.Y.Z**")
@@ -920,7 +920,7 @@ class TestCliRobustness(Base):
                          "README pins %s but documents %s" % (sorted(pinned), m.group(1)))
 
     def test_piping_into_head_does_not_traceback(self):
-        """`rmem list | head` is normal usage and must not dump a stack trace."""
+        """`agentlore list | head` is normal usage and must not dump a stack trace."""
         r = subprocess.run("python3 %s list | head -1" % TOOL, shell=True,
                            cwd=self.f.dir, capture_output=True, text=True)
         self.assertNotIn("Traceback", r.stderr, r.stderr)
@@ -936,7 +936,7 @@ class TestAgentDirectives(Base):
     """
 
     def _add(self, title, body, *extra):
-        return self.f.rmem("add", "--type", "convention", "--title", title, "--body", body,
+        return self.f.agentlore("add", "--type", "convention", "--title", title, "--body", body,
                            "--anchor", "src/**", "--evidence", "PR #1", "--author", "t", *extra)
 
     def test_ordinary_house_rules_stay_green(self):
@@ -978,7 +978,7 @@ class TestAgentDirectives(Base):
         self.assertEqual(code, 0, out)
         want = [i for i, ln in enumerate(self.f.read(".memory/conventions.md").splitlines(), 1)
                 if "Read the token" in ln][0]
-        code, out = self.f.rmem("check", "--github")
+        code, out = self.f.agentlore("check", "--github")
         self.assertIn("line=%d" % want, out)
 
     def test_an_exemption_must_state_a_reason(self):
@@ -1008,16 +1008,16 @@ class TestCompileCarriesDeadEnds(Base):
     def _add_dead_end(self, title="Keying on (order, amount) swallows a refund"):
         self.f.write("src/a.py", "x = 1\n")
         self.f.commit("code")
-        code, out = self.f.rmem("add", "--type", "dead-end", "--title", title,
+        code, out = self.f.agentlore("add", "--type", "dead-end", "--title", title,
                                 "--body", "Tried and rejected. Use instead: request_id",
                                 "--anchor", "src/**", "--evidence", "prod #412",
                                 "--author", "t")
         self.assertEqual(code, 0, out)
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
     def test_a_live_dead_end_reaches_agents_md(self):
         self._add_dead_end()
-        code, out = self.f.rmem("compile")
+        code, out = self.f.agentlore("compile")
         self.assertEqual(code, 0, out)
         agents = (self.f.dir / "AGENTS.md").read_text()
         self.assertIn("Rejected approaches", agents)
@@ -1032,10 +1032,10 @@ class TestCompileCarriesDeadEnds(Base):
         # a UNIQUE prefix is a feature; an ambiguous one is refused (see TestIdResolution)
         mem = (self.f.dir / ".memory" / "dead-ends.md").read_text()
         eid = mem.split("id: ")[1].split("\n")[0].strip()
-        code, out = self.f.rmem("verify", eid, "--resolved-by", "PR #1")
+        code, out = self.f.agentlore("verify", eid, "--resolved-by", "PR #1")
         self.assertEqual(code, 0, out)
-        self.f.rmem("index")
-        self.f.rmem("compile")
+        self.f.agentlore("index")
+        self.f.agentlore("compile")
         agents = (self.f.dir / "AGENTS.md").read_text()
         self.assertNotIn("Settled thing", agents)
 
@@ -1054,14 +1054,14 @@ class TestIdResolution(Base):
         self.f.write("src/a.py", "x = 1\n")
         self.f.write("src/b.py", "y = 1\n")
         self.f.commit("code")
-        self.f.rmem("add", "--type", "decision", "--title", "A rule",
+        self.f.agentlore("add", "--type", "decision", "--title", "A rule",
                     "--anchor", "src/a.py", "--author", "t")
-        self.f.rmem("add", "--type", "decision", "--title", "B rule",
+        self.f.agentlore("add", "--type", "decision", "--title", "B rule",
                     "--anchor", "src/b.py", "--author", "t")
-        self.f.rmem("index")
+        self.f.agentlore("index")
 
     def test_an_ambiguous_prefix_is_refused_and_touches_nothing(self):
-        code, out = self.f.rmem("verify", "DEC-", "--resolved-by", "PR #9")
+        code, out = self.f.agentlore("verify", "DEC-", "--resolved-by", "PR #9")
         self.assertEqual(code, 1, "an ambiguous prefix must fail closed:\n" + out)
         self.assertIn("ambiguous", out.lower())
         self.assertNotIn("PR #9", (self.f.dir / ".memory" / "decisions.md").read_text(),
@@ -1071,12 +1071,12 @@ class TestIdResolution(Base):
         mem = (self.f.dir / ".memory" / "decisions.md").read_text()
         first = mem.split("id: ")[1].split("\n")[0].strip()
         # a prefix longer than the shared date part is unique to one entry
-        code, out = self.f.rmem("verify", first[:-2], "--resolved-by", "PR #9")
+        code, out = self.f.agentlore("verify", first[:-2], "--resolved-by", "PR #9")
         self.assertEqual(code, 0, out)
         self.assertIn(first, out + (self.f.dir / ".memory" / "decisions.md").read_text())
 
     def test_an_unknown_id_refuses(self):
-        code, out = self.f.rmem("verify", "NOPE-123", "--resolved-by", "PR #1")
+        code, out = self.f.agentlore("verify", "NOPE-123", "--resolved-by", "PR #1")
         self.assertEqual(code, 1, out)
         self.assertIn("no memory with id", out)
 
@@ -1170,7 +1170,7 @@ class TestShippedArtifactsStayInSync(Base):
         return [d for d in sorted(ex.iterdir()) if (d / ".memory").is_dir()]
 
     def test_committed_agents_md_matches_compile(self):
-        """A stale AGENTS.md is a memory nothing delivers. Regenerate with rmem compile.
+        """A stale AGENTS.md is a memory nothing delivers. Regenerate with agentlore compile.
 
         Runs against a COPY of the example. The first version ran index+compile inside the real
         example directory, so it rewrote the tracked file it was asserting on. Measured: it did
@@ -1187,11 +1187,11 @@ class TestShippedArtifactsStayInSync(Base):
                 shutil.copytree(d, work)
                 committed = (d / "AGENTS.md").read_text()
                 for cmd in ("index", "compile"):
-                    r = subprocess.run([sys.executable, str(self.repo / "rmem"), cmd],
+                    r = subprocess.run([sys.executable, str(self.repo / "agentlore"), cmd],
                                        cwd=work, capture_output=True, text=True)
                     self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
                 self.assertEqual((work / "AGENTS.md").read_text(), committed,
-                                 f"{d.relative_to(self.repo)}/AGENTS.md is stale; run rmem compile")
+                                 f"{d.relative_to(self.repo)}/AGENTS.md is stale; run agentlore compile")
 
     def test_vendored_tool_copies_match_the_root_tool(self):
         """A vendored copy that lags the shipped tool demonstrates a tool nobody ships.
@@ -1200,12 +1200,12 @@ class TestShippedArtifactsStayInSync(Base):
         AGENTS.md was checked as "unchanged" using its own vendored copy, which predated the
         change, so the check proved nothing and CI caught it instead.
         """
-        root = self.repo / "rmem"
-        copies = [c for d in self._examples() for c in [d / "tools" / "rmem"] if c.exists()]
+        root = self.repo / "agentlore"
+        copies = [c for d in self._examples() for c in [d / "tools" / "agentlore"] if c.exists()]
         self.assertTrue(copies, "no vendored copies found -- the test is not looking at anything")
         for c in copies:
             self.assertEqual(c.read_bytes(), root.read_bytes(),
-                             f"{c.relative_to(self.repo)} differs from rmem; re-copy it")
+                             f"{c.relative_to(self.repo)} differs from agentlore; re-copy it")
 
 
 class TestIdGeneration(Base):
@@ -1223,11 +1223,11 @@ class TestIdGeneration(Base):
     """
 
     def _mod(self, hexval):
-        """Load `rmem` in-process with uuid pinned, so the collision is deterministic."""
+        """Load `agentlore` in-process with uuid pinned, so the collision is deterministic."""
         import types
-        src = (Path(__file__).resolve().parent.parent / "rmem").read_text()
-        mod = types.ModuleType("rmem_under_test")
-        exec(compile(src, "rmem", "exec"), mod.__dict__)
+        src = (Path(__file__).resolve().parent.parent / "agentlore").read_text()
+        mod = types.ModuleType("agentlore_under_test")
+        exec(compile(src, "agentlore", "exec"), mod.__dict__)
 
         class FixedUuid:
             def uuid4(self):
@@ -1281,7 +1281,7 @@ class TestIdGeneration(Base):
 
 
 class TestCompileCurrent(Base):
-    """The block in AGENTS.md must be what `rmem compile` would produce right now.
+    """The block in AGENTS.md must be what `agentlore compile` would produce right now.
 
     Uncompiled memory is memory nothing delivers, and every direction of that failure is
     silent: the gate stays green, the agent carries on, and the entry never arrives. This is
@@ -1296,23 +1296,23 @@ class TestCompileCurrent(Base):
 
     def test_a_stale_agents_md_fails_the_check(self):
         self._repo()
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         self.assertGreen()          # compiled and current: green
         self.f.add("--type", "convention", "--title", "Pin the SDK",
                    "--body", "Unpinned SDKs drift under us.",
                    "--anchor", "src/**", "--author", "t")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("compile-current")   # added but never compiled in: must fail
 
     def test_recompiling_clears_it(self):
         self._repo()
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         self.f.add("--type", "convention", "--title", "Pin the SDK",
                    "--body", "Unpinned SDKs drift under us.",
                    "--anchor", "src/**", "--author", "t")
-        self.f.rmem("index")
+        self.f.agentlore("index")
         self.assertFails("compile-current")
-        self.f.rmem("compile")
+        self.f.agentlore("compile")
         self.assertGreen()
 
     def test_a_repo_that_never_compiles_is_not_penalised(self):
@@ -1322,7 +1322,7 @@ class TestCompileCurrent(Base):
 
     def test_an_agents_md_without_the_block_is_not_penalised(self):
         self._repo()
-        self.f.write("AGENTS.md", "# AGENTS.md\n\nHand-written notes, no rmem block.\n")
+        self.f.write("AGENTS.md", "# AGENTS.md\n\nHand-written notes, no agentlore block.\n")
         self.assertGreen()
 
 
@@ -1351,7 +1351,7 @@ class TestResolvedByIsAuditable(Base):
     def test_an_empty_reason_is_refused_and_clears_nothing(self):
         did = self._stale_dead_end()
         self.assertFails("anchors-not-stale")
-        code, out = self.f.rmem("verify", did, "--resolved-by", "")
+        code, out = self.f.agentlore("verify", did, "--resolved-by", "")
         self.assertEqual(code, 1, "an empty --resolved-by must fail closed:\n" + out)
         self.assertIn("empty", out)
         # the important half: the flag was NOT cleared on the way out
@@ -1359,19 +1359,19 @@ class TestResolvedByIsAuditable(Base):
 
     def test_a_whitespace_reason_is_refused(self):
         did = self._stale_dead_end()
-        code, _ = self.f.rmem("verify", did, "--resolved-by", "   ")
+        code, _ = self.f.agentlore("verify", did, "--resolved-by", "   ")
         self.assertEqual(code, 1)
 
     def test_a_real_reason_is_recorded(self):
         did = self._stale_dead_end()
-        code, _ = self.f.rmem("verify", did, "--resolved-by", "PR #12 removed the fallback")
+        code, _ = self.f.agentlore("verify", did, "--resolved-by", "PR #12 removed the fallback")
         self.assertEqual(code, 0)
         self.assertIn("resolved_by: PR #12 removed the fallback",
                       self.f.read(".memory/dead-ends.md"))
 
     def test_omitting_the_flag_still_re_stamps(self):
         did = self._stale_dead_end()
-        code, out = self.f.rmem("verify", did)
+        code, out = self.f.agentlore("verify", did)
         self.assertEqual(code, 0, out)
         self.assertGreen()
 
@@ -1402,7 +1402,7 @@ class TestSensitiveData(Base):
         self.f.init()
 
     def _add(self, body, title="A memory", *extra):
-        return self.f.rmem("add", "--type", "decision", "--title", title, "--body", body,
+        return self.f.agentlore("add", "--type", "decision", "--title", title, "--body", body,
                            "--anchor", "src/**", "--author", "t", *extra)
 
     # ---- it refuses ----

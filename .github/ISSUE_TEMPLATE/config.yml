@@ -1,14 +1,14 @@
 blank_issues_enabled: true
 contact_links:
   - name: Question, idea, or "how do you use this?"
-    url: https://github.com/Rudra5417/rmem/discussions
+    url: https://github.com/Rudra5417/agentlore/discussions
     about: Ask anything, or share how it worked out in your repo. Half-formed is fine.
   - name: Does the memory actually reach your agent?
-    url: https://github.com/Rudra5417/rmem/blob/main/INTEGRATION.md
+    url: https://github.com/Rudra5417/agentlore/blob/main/INTEGRATION.md
     about: Per-host delivery, what shadows AGENTS.md, truncation limits, and the probe that proves it arrived.
   - name: Is it actually helping? Here is the measurement.
-    url: https://github.com/Rudra5417/rmem/blob/main/bench/README.md
+    url: https://github.com/Rudra5417/agentlore/blob/main/bench/README.md
     about: The harness, the method, and the honest null result. Re-run it against your repo.
   - name: Report a vulnerability
-    url: https://github.com/Rudra5417/rmem/security/advisories/new
+    url: https://github.com/Rudra5417/agentlore/security/advisories/new
     about: Please report security issues privately — never in a public issue.

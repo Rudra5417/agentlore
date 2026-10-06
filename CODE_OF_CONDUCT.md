@@ -53,7 +53,7 @@ officially representing the community in public spaces.
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported privately to
 the maintainers using the repository's
-[private report form](https://github.com/Rudra5417/rmem/security/advisories/new) (it is private and
+[private report form](https://github.com/Rudra5417/agentlore/security/advisories/new) (it is private and
 is used for conduct reports too), or by contacting [@Rudra5417](https://github.com/Rudra5417)
 directly on GitHub. All complaints will be reviewed and investigated promptly and fairly.
 

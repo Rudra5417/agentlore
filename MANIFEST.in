@@ -1,0 +1,8 @@
+# Local artifacts that must never ship in an sdist.
+prune bench/runs
+prune bench/logs
+prune .test-failures
+prune dist
+prune build
+
+global-exclude __pycache__/* *.py[cod] .DS_Store .test-failures

@@ -13,7 +13,7 @@
 
 <!-- Which check fires, and which test proves it? If you added or changed a check:
        - [ ] the test fails against the old code and passes against the new one
-       - [ ] the count assertion in tests/test_rmem.py still matches
+       - [ ] the count assertion in tests/test_agentlore.py still matches
        - [ ] the table in README.md mentions it -->
 
 - [ ] `python3 run_tests.py` is green

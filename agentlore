@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rmem - git-reviewable repo memory for coding agents.
+"""agentlore - git-reviewable repo memory for coding agents.
 
 Typed memories live as markdown in .memory/ and are versioned with the code, so
 every write shows up as a reviewable diff in the PR that motivated it.
@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.8.0"
+VERSION = "0.9.0"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -41,7 +41,7 @@ HEADING = {"decision": "Decisions", "dead-end": "Dead ends",
 # so a reviewer can see what was removed and why.
 DEAD_STATUSES = ("superseded", "deprecated", "retracted")
 
-FENCE = re.compile(r"<!--\s*rmem\s*(.*?)-->", re.S)
+FENCE = re.compile(r"<!--\s*agentlore\s*(.*?)-->", re.S)
 GREEN, RED, DIM, BOLD, OFF = "\033[32m", "\033[31m", "\033[2m", "\033[1m", "\033[0m"
 
 
@@ -103,7 +103,7 @@ def changed_set(since=None):
     files = set()
     # --relative is load-bearing, not cosmetic. git reports paths relative to the REPO
     # ROOT; anchors and ".memory/<file>" are relative to the WORKING DIRECTORY, which is
-    # the memory root. Without --relative the two never match whenever rmem runs from a
+    # the memory root. Without --relative the two never match whenever agentlore runs from a
     # subdirectory, so dead-ends-settled matches nothing and reports GREEN while checking
     # nothing -- a monorepo or service-subdirectory layout silently loses the gate.
     # (git ls-files --others is already cwd-relative, which is how this inconsistency hid.)
@@ -190,7 +190,7 @@ def new_entry_id(mtype):
         taken = {e["id"] for e in load_all()}
     except Exception as exc:
         raise SystemExit(
-            "rmem: refusing to mint an id -- could not read the ids already in use (%s).\n"
+            "agentlore: refusing to mint an id -- could not read the ids already in use (%s).\n"
             "      A duplicate id would make verify/supersede/retract ambiguous, so this\n"
             "      fails closed. Fix the unreadable memory file above, then retry." % exc)
     for attempt in range(10):
@@ -342,7 +342,7 @@ DIRECTIVE_PATTERNS = [
         r"\b(?:previous|prior|earlier|above|system)\b[^.]{0,20}?\b(?:instruction|prompt|rule|message)s?\b")),
     ("tells the agent to bypass this gate", re.compile(
         r"(?i)\b(?:skip|bypass|disable|ignore|avoid)\b[^.]{0,30}?"
-        r"\b(?:memory-health|memory health|rmem check|the gate|this check|these checks)\b")),
+        r"\b(?:memory-health|memory health|agentlore check|the gate|this check|these checks)\b")),
     ("instructs the agent about credential handling", re.compile(
         r"(?i)\b(?:read|use|print|echo|export|send|upload|post|curl)\b[^.]{0,30}?"
         r"\b(?:the\s+)?(?:credential|api[ _-]?key|token|password|secret|private key)\b")),
@@ -415,7 +415,7 @@ def refuse_id(needle, candidates):
         print("ambiguous id %r -- %d memories match:" % (needle, len(candidates)))
         for c in candidates:
             print("  %s" % c)
-        print("  pass a longer id. rmem will not guess which one you meant.")
+        print("  pass a longer id. agentlore will not guess which one you meant.")
     else:
         print("no memory with id %s" % needle)
     return 1
@@ -663,7 +663,7 @@ def cmd_init(args):
         p = MEM / name
         if not p.exists():
             kind = [k for k, v in FILES.items() if v == name][0]
-            p.write_text("# %s\n\n<!-- rmem: one entry per '## ' heading -->\n" % HEADING[kind])
+            p.write_text("# %s\n\n<!-- agentlore: one entry per '## ' heading -->\n" % HEADING[kind])
     gi = Path(".gitignore")
     line = ".memory/index.db"
     existing = gi.read_text() if gi.exists() else ""
@@ -702,7 +702,7 @@ def cmd_add(args):
     lines = [
         "",
         "## %s%s" % (args.title, " (settled)" if args.resolved_by else ""),
-        "<!-- rmem",
+        "<!-- agentlore",
         "id: %s" % eid,
         "type: %s" % args.type,
         "status: %s" % args.status,
@@ -804,7 +804,7 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
     for e, hits in stale:
         F("error", e, "MEMORY-HEALTH: stale memory",
           '%s "%s" is out of date: %s changed since it was last verified (%s). Resolve it in this PR with '
-          '"rmem verify %s" (still true) or "rmem supersede %s <new-id>" (no longer true).'
+          '"agentlore verify %s" (still true) or "agentlore supersede %s <new-id>" (no longer true).'
           % (e["id"], e["title"], ", ".join(hits[:4]) or "its anchored files",
              e.get("verified_at") or "?", e["id"], e["id"]))
         # The memory file is usually NOT part of this PR's diff, so an annotation on it
@@ -814,15 +814,15 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
                 "level": "error", "file": path, "line": "",
                 "title": "MEMORY-HEALTH: this change invalidates a memory",
                 "message": 'This change makes %s "%s" (in .memory/%s) out of date. '
-                           'Resolve it in this PR: "rmem verify %s" if it is still true, '
-                           'or "rmem supersede %s <new-id>" if not, then "rmem index".'
+                           'Resolve it in this PR: "agentlore verify %s" if it is still true, '
+                           'or "agentlore supersede %s <new-id>" if not, then "agentlore index".'
                            % (e["id"], e["title"], e["file"], e["id"], e["id"]),
             })
     for e in live:
         if not (e.get("anchor_hash") or "").strip():
             F("error", e, "MEMORY-HEALTH: memory not stamped",
               "%s has no anchor fingerprint, so code drift cannot be detected for it. "
-              "Run: rmem verify %s" % (e["id"], e["id"]))
+              "Run: agentlore verify %s" % (e["id"], e["id"]))
         for g in e["anchors"]:
             if not anchor_has_files(g):
                 F("error", e, "MEMORY-HEALTH: anchor has no code",
@@ -843,7 +843,7 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
           '"%s" is anchored to %s, which this same change also modified -- so the memory '
           'describes the world BEFORE the change and now reads as a live warning about a '
           'condition your change removed. State whether it still holds: '
-          'rmem verify %s --resolved-by "<commit or PR that settled it>". If it is really '
+          'agentlore verify %s --resolved-by "<commit or PR that settled it>". If it is really '
           'settled, retype it as a decision and write the title about the CURRENT rule.'
           % (e["title"], ", ".join(touched), e["id"]))
         for path in touched[:1]:
@@ -856,7 +856,7 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
     for e in (restyled or []):
         F("notice", e, "MEMORY-HEALTH: reformatted, content equivalent",
           "%s is anchored to files that were reformatted or re-commented. The code did not "
-          "meaningfully change, so this is not a failure. Run rmem verify %s to clear it."
+          "meaningfully change, so this is not a failure. Run agentlore verify %s to clear it."
           % (e["id"], e["id"]))
     for e, why in (hazards or []):
         F("error", e, "MEMORY-HEALTH: unbacked hazard",
@@ -877,10 +877,10 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
         key = a.get("key", "")
         F("error", b, "MEMORY-HEALTH: two memories contradict each other",
           'Two live memories claim different things about "%s": %s says "%s", %s (in '
-          '.memory/%s) says "%s". rmem will not pick a winner -- both are surfaced, and '
-          'resolving it is a human act. If %s is now wrong: "rmem supersede %s %s". If it '
-          'was never true: "rmem retract %s --reason ...". If both hold in different '
-          'contexts: re-add %s with --coexists-with %s --coexists-why "...". Then rmem index.'
+          '.memory/%s) says "%s". agentlore will not pick a winner -- both are surfaced, and '
+          'resolving it is a human act. If %s is now wrong: "agentlore supersede %s %s". If it '
+          'was never true: "agentlore retract %s --reason ...". If both hold in different '
+          'contexts: re-add %s with --coexists-with %s --coexists-why "...". Then agentlore index.'
           % (key, a["id"], a["value"], b["id"], b["file"], b["value"],
              a["id"], a["id"], b["id"], a["id"], b["id"], a["id"]))
     for e, msg in (chains or []):
@@ -895,10 +895,10 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
           '%s declares key "%s" but no value, so nothing can be compared with it. '
           'Add --value, or drop --key.' % (e["id"], e.get("key", "")))
     if not index_ok:
-        F("error", None, "MEMORY-HEALTH: no index", "The derived index is missing. Run: rmem index")
+        F("error", None, "MEMORY-HEALTH: no index", "The derived index is missing. Run: agentlore index")
     elif not index_fresh:
         F("error", None, "MEMORY-HEALTH: index out of date",
-          "The markdown was edited without rebuilding the index. Run: rmem index")
+          "The markdown was edited without rebuilding the index. Run: agentlore index")
     return findings
 
 
@@ -926,8 +926,8 @@ def emit_github(findings, passed, total, n_entries, n_stale):
             out.append("| %s | %s |" % (where, f["message"]))
     else:
         out.append("All memory checks pass. Memory is a hint; code and failing tests win.")
-    out += ["", "_Resolve a stale memory in this PR: `rmem verify <id>` (still true) "
-            "or `rmem supersede <id> <new-id>` (no longer true). Then `rmem index`._"]
+    out += ["", "_Resolve a stale memory in this PR: `agentlore verify <id>` (still true) "
+            "or `agentlore supersede <id> <new-id>` (no longer true). Then `agentlore index`._"]
     try:
         with open(path, "a") as fh:
             fh.write("\n".join(out) + "\n")
@@ -939,7 +939,7 @@ def emit_github(findings, passed, total, n_entries, n_stale):
 
 def cmd_check(args):
     if not MEM.exists():
-        print("MEMORY-HEALTH: 0/1 %sRED%s - no .memory/ in %s (run: rmem init)" % (RED, OFF, Path.cwd()))
+        print("MEMORY-HEALTH: 0/1 %sRED%s - no .memory/ in %s (run: agentlore init)" % (RED, OFF, Path.cwd()))
         return 1
 
     checks = []
@@ -952,7 +952,7 @@ def cmd_check(args):
 
     # 1 index present
     index_ok = INDEX.exists()
-    add("index-present", index_ok, "run: rmem index")
+    add("index-present", index_ok, "run: agentlore index")
 
     # 2 index fresh
     fresh = False
@@ -964,7 +964,7 @@ def cmd_check(args):
             con.close()
             have = row[0] if row else ""
             fresh = have == source_hash()
-            detail = "run: rmem index" if not fresh else ""
+            detail = "run: agentlore index" if not fresh else ""
         except Exception as exc:
             detail = "index unreadable (%s)" % exc
     add("index-fresh", fresh, detail)
@@ -1147,7 +1147,7 @@ def cmd_check(args):
             chain_problems.append((e, "%s is marked as replaced by %s, but no memory with that "
                                       "id exists, so the retirement points nowhere. Point it at "
                                       "the real successor, or re-stamp it if it is still true "
-                                      "(rmem verify %s)." % (e["id"], nxt, e["id"])))
+                                      "(agentlore verify %s)." % (e["id"], nxt, e["id"])))
     for e in entries:                      # "I supersede X" is the same edge, read forwards
         for ref in e["supersedes"]:
             if ref in byid:
@@ -1165,8 +1165,8 @@ def cmd_check(args):
                                            "%s -- a cycle, so the chain never reaches a live "
                                            "memory and the area has no rule at all. Break it by "
                                            "re-stamping whichever entry is still true "
-                                           "(rmem verify <id>) or retracting it "
-                                           "(rmem retract <id> --reason ...)."
+                                           "(agentlore verify <id>) or retracting it "
+                                           "(agentlore retract <id> --reason ...)."
                                            % " -> ".join(loop + [cur])))
                 break
             seen.append(cur)
@@ -1192,12 +1192,12 @@ def cmd_check(args):
     agent_md = Path("AGENTS.md")
     if not agent_md.exists():
         add("compile-current", True, "no AGENTS.md here (not compiled)")
-    elif "<!-- rmem:begin" not in agent_md.read_text():
+    elif "<!-- agentlore:begin" not in agent_md.read_text():
         add("compile-current", True, "AGENTS.md has no compiled block")
     else:
-        committed = re.search(r"<!-- rmem:begin.*?<!-- rmem:end -->", agent_md.read_text(), re.S)
+        committed = re.search(r"<!-- agentlore:begin.*?<!-- agentlore:end -->", agent_md.read_text(), re.S)
         add("compile-current", bool(committed) and committed.group(0) == compile_block(),
-            "AGENTS.md is stale; run: rmem compile")
+            "AGENTS.md is stale; run: agentlore compile")
 
     # 16/17 nothing in .memory/ should be a secret or a record of a person
     #
@@ -1305,11 +1305,11 @@ def cmd_check(args):
             print("    anchored to %s" % (", ".join(e["anchors"]) or "-"))
             print("    changed since %s: %s" % (e.get("verified_at") or "-",
                   ", ".join(hits[:4]) or "anchor content changed"))
-            print("    %s-> re-verify, or run: rmem supersede %s%s" % (DIM, e["id"], OFF))
+            print("    %s-> re-verify, or run: agentlore supersede %s%s" % (DIM, e["id"], OFF))
     if unverifiable:
         print("\n%s%d memories have no anchor fingerprint, so drift cannot be detected: %s%s"
               % (DIM, len(unverifiable), ", ".join(unverifiable[:5]), OFF))
-        print("%s-> stamp them: rmem verify <id>%s" % (DIM, OFF))
+        print("%s-> stamp them: agentlore verify <id>%s" % (DIM, OFF))
     if unsettled:
         print("\n%sdead ends that rode the change that settled them:%s" % (BOLD, OFF))
         for e, touched in unsettled:
@@ -1318,7 +1318,7 @@ def cmd_check(args):
                   % (", ".join(e["anchors"]), ", ".join(touched)))
             print("    %s-> this memory now reads as a live warning about a condition your"
                   " change removed.%s" % (DIM, OFF))
-            print("    %s-> state it: rmem verify %s --resolved-by \"<what settled it>\"%s"
+            print("    %s-> state it: agentlore verify %s --resolved-by \"<what settled it>\"%s"
                   % (DIM, e["id"], OFF))
             print("    %s-> or retype it as a decision and write the title about the CURRENT"
                   " rule.%s" % (DIM, OFF))
@@ -1346,8 +1346,8 @@ def cmd_check(args):
             print("      says: %s" % a["value"])
             print("    %s%s%s  %s" % (BOLD, b["id"], OFF, b["title"]))
             print("      says: %s" % b["value"])
-            print("    %s-> rmem will not pick a winner. If one is now wrong: supersede it.%s" % (DIM, OFF))
-            print("    %s-> If one was never true: rmem retract <id> --reason ...%s" % (DIM, OFF))
+            print("    %s-> agentlore will not pick a winner. If one is now wrong: supersede it.%s" % (DIM, OFF))
+            print("    %s-> If one was never true: agentlore retract <id> --reason ...%s" % (DIM, OFF))
             print("    %s-> If both hold in different contexts, say so: --coexists-with + --coexists-why.%s"
                   % (DIM, OFF))
     if chain_problems:
@@ -1460,7 +1460,7 @@ def compile_block():
     dead = [e for e in load_all()
             if e["type"] == "dead-end" and e["status"] == "accepted"
             and not (e.get("resolved_by") or "").strip()]
-    body = ["<!-- rmem:begin (generated from .memory/ - do not edit) -->",
+    body = ["<!-- agentlore:begin (generated from .memory/ - do not edit) -->",
             "## House rules", ""]
     if not entries:
         body.append("_(none recorded)_")
@@ -1493,7 +1493,7 @@ def compile_block():
                 body.append("  %s" % use)
         if len(dead) > COMPILE_DEAD_MAX:
             body += ["", "_%d more in `.memory/dead-ends.md`._" % (len(dead) - COMPILE_DEAD_MAX)]
-    body += ["", "<!-- rmem:end -->"]
+    body += ["", "<!-- agentlore:end -->"]
     return "\n".join(body)
 
 
@@ -1502,8 +1502,8 @@ def cmd_compile(args):
     agent = Path("AGENTS.md")
     block = compile_block()
     text = agent.read_text() if agent.exists() else "# AGENTS.md\n"
-    if "<!-- rmem:begin" in text:
-        text = re.sub(r"<!-- rmem:begin.*?<!-- rmem:end -->", block, text, flags=re.S)
+    if "<!-- agentlore:begin" in text:
+        text = re.sub(r"<!-- agentlore:begin.*?<!-- agentlore:end -->", block, text, flags=re.S)
     else:
         text = text.rstrip("\n") + "\n\n" + block + "\n"
     agent.write_text(text)
@@ -1644,7 +1644,7 @@ def cmd_rm(args):
                   " existing clone and in `git log -p`.%s" % (RED, OFF))
             print("  %s  if it was sensitive, removing it here does not unpublish it.%s"
                   % (RED, OFF))
-            print("  %s-> for 'this was never true', prefer: rmem retract <id> --reason ...%s"
+            print("  %s-> for 'this was never true', prefer: agentlore retract <id> --reason ...%s"
                   % (DIM, OFF))
             return cmd_index(args)
     print("no memory with id %s" % args.id)
@@ -1772,9 +1772,9 @@ def cmd_list(args):
 # --------------------------------------------------------------------- wiring
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="rmem", description=__doc__.splitlines()[0],
+    p = argparse.ArgumentParser(prog="agentlore", description=__doc__.splitlines()[0],
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--version", action="version", version="rmem " + VERSION)
+    p.add_argument("--version", action="version", version="agentlore " + VERSION)
     sub = p.add_subparsers(dest="cmd")
 
     s = sub.add_parser("init", help="create .memory/ and gitignore the index")
@@ -1889,7 +1889,7 @@ def main(argv=None):
     try:
         return args.func(args)
     except BrokenPipeError:
-        # `rmem list | head` is a normal thing to do; a traceback is not. Redirect the
+        # `agentlore list | head` is a normal thing to do; a traceback is not. Redirect the
         # dead stdout to devnull so Python does not also complain while shutting down.
         os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         return 0

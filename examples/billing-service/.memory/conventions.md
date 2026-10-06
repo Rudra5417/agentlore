@@ -1,9 +1,9 @@
 # Conventions
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->
 
 ## Use httpx, never requests
-<!-- rmem
+<!-- agentlore
 id: CONV-2026-09-27-82fb
 type: convention
 status: accepted
@@ -17,7 +17,7 @@ anchor_hash: f2f5c3062e2a8e0e
 httpx is already a dependency and supports the async client we use in handlers.
 
 ## HTTP handlers live in src/api/handlers/
-<!-- rmem
+<!-- agentlore
 id: CONV-2026-09-27-a11f
 type: convention
 status: accepted

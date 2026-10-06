@@ -7,10 +7,10 @@ body:
     attributes:
       value: |
         A gate that runs is not automatically a gate that works. The most common silent failure is
-        installing `rmem` correctly and getting a green check while the agent **never reads the
+        installing `agentlore` correctly and getting a green check while the agent **never reads the
         memory** — everything looks fine and the memory does nothing.
 
-        [INTEGRATION.md](https://github.com/Rudra5417/rmem/blob/main/INTEGRATION.md) covers which
+        [INTEGRATION.md](https://github.com/Rudra5417/agentlore/blob/main/INTEGRATION.md) covers which
         hosts read `AGENTS.md`, which need config, the truncation limits, and the one-question
         probe that proves the memory arrived. Worth a look before filing.
   - type: input
@@ -46,7 +46,7 @@ body:
     id: version
     attributes:
       label: Version
-      placeholder: rmem 0.7.1
+      placeholder: agentlore 0.7.1
     validations:
       required: true
   - type: textarea

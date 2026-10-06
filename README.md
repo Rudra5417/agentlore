@@ -1,21 +1,21 @@
-# rmem
+# agentlore
 
 **Repo memory for coding agents — committed to your repository, reviewed in the pull request that
 motivated it, and gated so it cannot silently rot.**
 
-[![tests](https://github.com/Rudra5417/rmem/actions/workflows/tests.yml/badge.svg)](https://github.com/Rudra5417/rmem/actions/workflows/tests.yml)
-[![release](https://img.shields.io/github/v/release/Rudra5417/rmem)](https://github.com/Rudra5417/rmem/releases/latest)
-[![license](https://img.shields.io/github/license/Rudra5417/rmem)](LICENSE)
+[![tests](https://github.com/Rudra5417/agentlore/actions/workflows/tests.yml/badge.svg)](https://github.com/Rudra5417/agentlore/actions/workflows/tests.yml)
+[![release](https://img.shields.io/github/v/release/Rudra5417/agentlore)](https://github.com/Rudra5417/agentlore/releases/latest)
+[![license](https://img.shields.io/github/license/Rudra5417/agentlore)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.9%20%7C%203.12-2dd4f7)](.github/workflows/tests.yml)
 
 Coding agents forget everything between sessions, and the facts worth keeping — decisions, dead
-ends, house rules — end up in someone's head or in a chat log nobody will read again. `rmem` gives
+ends, house rules — end up in someone's head or in a chat log nobody will read again. `agentlore` gives
 them somewhere to live: typed markdown in `.memory/`, versioned with the code, compiled into the
 `AGENTS.md` your agent already reads, and **checked in CI**.
 
 One file. Python standard library. No dependencies, no service, no account, nothing to configure.
 
-Current release **v0.8.0** · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
+Current release **v0.9.0** · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
 
 ---
 
@@ -26,12 +26,12 @@ false the moment the fix lands — and it now reads as a live warning to every f
 output, from one change:
 
 ```console
-$ rmem add --type dead-end \
+$ agentlore add --type dead-end \
     --title  "The refund window rejects credit notes too" \
     --body   "Routing credit notes through refund() fails: the vendor rejects them." \
     --anchor "src/billing/**" --evidence "PR #4821 - double charge"
 
-$ rmem check --since "$BASE_SHA"        # in CI: github.event.pull_request.base.sha
+$ agentlore check --since "$BASE_SHA"        # in CI: github.event.pull_request.base.sha
 MEMORY-HEALTH: 17/18 BROKEN  (1 memories, 0 stale, billing)
   ...
   FAIL dead-ends-settled  -- 1 unsettled
@@ -40,7 +40,7 @@ dead ends that rode the change that settled them:
   DEAD-2026-09-29-95f7  The refund window rejects credit notes too
     anchored to src/billing/**, changed in this same change: src/billing/gateway.py
     -> this memory now reads as a live warning about a condition your change removed.
-    -> state it: rmem verify DEAD-2026-09-29-95f7 --resolved-by "<what settled it>"
+    -> state it: agentlore verify DEAD-2026-09-29-95f7 --resolved-by "<what settled it>"
     -> or retype it as a decision and write the title about the CURRENT rule.
 
 2 finding(s) -> fix before merging
@@ -50,16 +50,16 @@ The agent's body hedged ("before the fix"); the **heading** did not — and the 
 thing the next agent reads. So the tool rewrites it rather than trusting the agent to:
 
 ```console
-$ rmem verify DEAD-2026-09-29-95f7 --resolved-by "vendor supports credit notes as of v3.2"
+$ agentlore verify DEAD-2026-09-29-95f7 --resolved-by "vendor supports credit notes as of v3.2"
 verified DEAD-2026-09-29-95f7 @ b5c646d
 
 $ grep '^## ' .memory/dead-ends.md
 ## The refund window rejects credit notes too (settled)
 
-$ rmem check --brief
+$ agentlore check --brief
 MEMORY-HEALTH: 17/18 BROKEN -- compile-current     # the file your agent reads is now stale
-$ rmem compile
-$ rmem check --brief
+$ agentlore compile
+$ agentlore check --brief
 MEMORY-HEALTH: 18/18 GREEN
 ```
 
@@ -74,8 +74,9 @@ One 84 KB Python file with no dependencies, so there is nothing to install in th
 sense — you pick how much of it you want to own.
 
 **Requirements:** Python **3.9+** (CI runs 3.9 and 3.12) and `git`. That is the whole list: no
-`pip install`, no virtualenv, no lockfile, no build step. It is not on PyPI, deliberately — a single
-stdlib file has nothing to resolve, pin or audit beyond this repository.
+virtualenv, no lockfile, no build step. There is nothing to resolve, pin or audit — the tool is a
+single stdlib file. The canonical artifact is that one file; a package-index install is a managed
+copy of it, not a different thing.
 
 ### 1. As a GitHub Action — nothing to install
 
@@ -85,7 +86,7 @@ Usually the right answer, because the gate is the part that has to run on every 
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0        # only so an annotation can name the file that drifted
-      - uses: Rudra5417/rmem@v1
+      - uses: Rudra5417/agentlore@v1
         with:
           since: ${{ github.event.pull_request.base.sha }}
 ```
@@ -100,10 +101,10 @@ organisations require this.
 
 ```bash
 mkdir -p tools
-curl -fsSL -o tools/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.8.0/rmem
-chmod +x tools/rmem
-git add tools/rmem
-python3 tools/rmem check --brief          # runs with no install at all
+curl -fsSL -o tools/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.0/agentlore
+chmod +x tools/agentlore
+git add tools/agentlore
+python3 tools/agentlore check --brief          # runs with no install at all
 ```
 
 Pin the tag (as above) for reproducibility, or use `main` to track HEAD. Then wire it into a job the
@@ -112,23 +113,34 @@ commands.
 
 ### 3. On your PATH — for local use, and for an agent to call
 
-Worth it if you want an agent to run `rmem` itself, or to check memories before pushing:
+Worth it if you want an agent to run `agentlore` itself, or to check memories before pushing:
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fsSL -o ~/.local/bin/rmem https://raw.githubusercontent.com/Rudra5417/rmem/v0.8.0/rmem
-chmod +x ~/.local/bin/rmem
-rmem --version                            # rmem 0.8.0
+curl -fsSL -o ~/.local/bin/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.0/agentlore
+chmod +x ~/.local/bin/agentlore
+agentlore --version                            # agentlore 0.9.0
 ```
 
 If `~/.local/bin` is not already on your `PATH`, add it (`export PATH="$HOME/.local/bin:$PATH"`).
 Prefer `git clone`? The tool is just the file at the repo root — copy it wherever you like; nothing
 depends on its location, and it runs from any working directory.
 
+### 4. From a package index — `pip`, `pipx` or `uv`
+
+A managed copy of the same file, for when you would rather not vendor or curl it:
+
+```bash
+uv tool install agentlore        # or: pipx install agentlore   /   pip install agentlore
+agentlore --version              # agentlore 0.9.0
+```
+
+The package ships the identical single, zero-dependency file — installing it resolves nothing.
+
 ### Check it before you wire it in
 
 ```console
-$ rmem init && rmem check --brief
+$ agentlore init && agentlore check --brief
 MEMORY-HEALTH: 18/18 GREEN
 ```
 
@@ -137,16 +149,16 @@ An empty `.memory/` is green on purpose: there is nothing to be wrong about yet.
 ## Quick start
 
 ```bash
-rmem init          # 1. create .memory/, gitignore the derived index
+agentlore init          # 1. create .memory/, gitignore the derived index
                    # 2. your agent (or you) records what it learns:
-rmem add --type decision \
+agentlore add --type decision \
     --title "Refunds close at 90 days" --body "Vendor contract; enforced in gateway.py." \
     --anchor 'src/billing/**' --evidence "PR #4821"
-rmem compile       # 3. deliver it — writes a block into AGENTS.md
-rmem check         #    exit 1 when a memory has stopped being true
+agentlore compile       # 3. deliver it — writes a block into AGENTS.md
+agentlore check         #    exit 1 when a memory has stopped being true
 ```
 
-(Using the vendored copy from option 2? Every command below is `python3 tools/rmem …` instead.)
+(Using the vendored copy from option 2? Every command below is `python3 tools/agentlore …` instead.)
 
 Commit the `.memory/*.md` and the `AGENTS.md` block. That is the whole model: the markdown is the
 source of truth, the index is derived, and the memory **rides the pull request** that motivated it,
@@ -158,7 +170,7 @@ Then add the gate. No vendored copy, nothing to keep in sync:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0        # only so an annotation can name the file that drifted
-      - uses: Rudra5417/rmem@v1
+      - uses: Rudra5417/agentlore@v1
         with:
           since: ${{ github.event.pull_request.base.sha }}
 ```
@@ -216,7 +228,7 @@ inconvenient. [The full table, the agent trials, and how they were measured →]
 ## How it differs
 
 - **`AGENTS.md` / `CLAUDE.md`** — plain prose, hand-written, loaded in full every session, and it
-  rots silently. `rmem compile` feeds it: typed fragments are the source, `AGENTS.md` is a build
+  rots silently. `agentlore compile` feeds it: typed fragments are the source, `AGENTS.md` is a build
   target, so nothing has to change its read path.
 - **mem0 / claude-mem / OpenMemory** — auto-capture into an opaque store. Not reviewable, not shared
   ground truth, not versioned with the code.

@@ -1,4 +1,4 @@
-name: rmem - memory health
+name: agentlore - memory health
 description: "Repo memory for coding agents: fail the gate when code moved under a memory and the memory did not."
 author: Rudra Patel
 
@@ -26,7 +26,7 @@ inputs:
     default: "true"
   compile-in-sync:
     description: >-
-      Also assert the committed AGENTS.md matches what `rmem compile` generates. Requires
+      Also assert the committed AGENTS.md matches what `agentlore compile` generates. Requires
       AGENTS.md to be tracked, otherwise the comparison would pass vacuously.
     required: false
     default: "false"
@@ -44,7 +44,7 @@ runs:
     - name: Rebuild the derived index
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: python3 "${{ github.action_path }}/rmem" index
+      run: python3 "${{ github.action_path }}/agentlore" index
 
     - name: MEMORY-HEALTH
       shell: bash
@@ -54,7 +54,7 @@ runs:
         if [ "${{ inputs.github }}" = "true" ]; then args+=(--github); fi
         if [ -n "${{ inputs.since }}" ]; then args+=(--since "${{ inputs.since }}"); fi
         code=0
-        python3 "${{ github.action_path }}/rmem" "${args[@]}" || code=$?
+        python3 "${{ github.action_path }}/agentlore" "${args[@]}" || code=$?
         if [ "$code" -ne 0 ]; then
           if [ "${{ inputs.fail-on-broken }}" = "true" ]; then
             exit "$code"
@@ -69,7 +69,7 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
-        python3 "${{ github.action_path }}/rmem" compile > /dev/null
+        python3 "${{ github.action_path }}/agentlore" compile > /dev/null
         if ! git ls-files --error-unmatch AGENTS.md > /dev/null 2>&1; then
           echo "::error::AGENTS.md is not tracked, so an out-of-sync build cannot be detected (git diff is silent on untracked files). Commit it, or set compile-in-sync: false."
           exit 1

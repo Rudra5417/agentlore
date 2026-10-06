@@ -1,7 +1,7 @@
 name: tests
 
 # Four jobs, because they answer different questions:
-#   tests  -- does rmem behave the way it claims?
+#   tests  -- does agentlore behave the way it claims?
 #   example -- does the shipped example pass its own memory gate in CI, the way a
 #              real repo would? This is the tool used on itself.
 #   action -- does the action work the way a consumer will use it, in BOTH directions?
@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Syntax check (stdlib only, no dependencies to install)
-        run: python3 -m py_compile rmem
+        run: python3 -m py_compile agentlore
       - name: Run the suite
         run: python3 run_tests.py
 
@@ -45,15 +45,15 @@ jobs:
       - name: The example passes its own memory gate
         working-directory: examples/billing-service
         run: |
-          python3 tools/rmem index
-          python3 tools/rmem check --brief
+          python3 tools/agentlore index
+          python3 tools/agentlore check --brief
       - name: The vendored copy matches the tool at the root
         # A drift here means the example is demonstrating a tool nobody is shipping.
-        run: cmp rmem examples/billing-service/tools/rmem
+        run: cmp agentlore examples/billing-service/tools/agentlore
       - name: Generated AGENTS.md is committed in sync
         working-directory: examples/billing-service
         run: |
-          python3 tools/rmem compile
+          python3 tools/agentlore compile
           git diff --exit-code AGENTS.md
 
   bench:

@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
 
       - name: MEMORY-HEALTH for the shipped example
-        uses: Rudra5417/rmem@v1
+        uses: Rudra5417/agentlore@v1
         with:
           working-directory: examples/billing-service
           compile-in-sync: "true"

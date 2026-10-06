@@ -19,7 +19,7 @@ Three honest limits, stated because this pattern is easy to oversell:
   Karpathy's loop turns 12 experiments an hour; this one turns about two.
 - The metric is a trap rate on ONE fixture. A candidate that improves it may be overfitted to
   it, so the journal records the effect size and the p-value, never just "kept".
-- The loop may not write memory the gate rejects. A candidate that fails `rmem check` is
+- The loop may not write memory the gate rejects. A candidate that fails `agentlore check` is
   refused before it is ever measured -- memory that breaks the gate is not a candidate.
 
 Usage:
@@ -229,7 +229,7 @@ def main():
 
 
 def write_summary(rows, base, a):
-    """The journal is the artifact a human reviews: rmem's whole point is reviewable memory."""
+    """The journal is the artifact a human reviews: agentlore's whole point is reviewable memory."""
     lines = ["# Memory loop journal", "",
              "Baseline (the memory as it ships): **%d/%d traps** at n=%d per arm, mode `%s`."
              % (base["trap"], base["n"], a.runs, a.mode), "",

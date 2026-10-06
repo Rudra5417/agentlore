@@ -31,16 +31,16 @@ jobs:
       # .memory/index.db is gitignored: it is a derived build artifact, never
       # reviewed, never merged. CI rebuilds it from the markdown every time.
       - name: Rebuild the derived index
-        run: python3 tools/rmem index
+        run: python3 tools/agentlore index
 
       - name: MEMORY-HEALTH
         # Exits 1 on any broken check. Annotations land on the PR diff; the table
         # lands in the job summary. This single step is the whole review gate.
-        run: python3 tools/rmem check --github
+        run: python3 tools/agentlore check --github
 
       # Typed fragments are the source of truth; AGENTS.md is a build target.
       # If they disagree, the committed AGENTS.md is lying to every agent.
       - name: AGENTS.md matches .memory/conventions.md
         run: |
-          python3 tools/rmem compile
+          python3 tools/agentlore compile
           git diff --exit-code AGENTS.md

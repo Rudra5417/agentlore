@@ -2,27 +2,27 @@
 
 > The full command reference, the memory lifecycle, and the CI integration.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Use
 
 ```sh
-rmem init                                  # create .memory/, gitignore the index
-rmem add --type decision|dead-end|convention --title T --body B \
+agentlore init                                  # create .memory/, gitignore the index
+agentlore add --type decision|dead-end|convention --title T --body B \
          --anchor "src/billing/**" --evidence "PR #4821 - double charge" \
          [--resolved-by "what settled it"]
-rmem add --type hazard --title T --body B --anchor "src/billing/**" \
+agentlore add --type hazard --title T --body B --anchor "src/billing/**" \
          --owner "@epic/payments-team" --enforcement "CODEOWNERS"   # both required
-rmem check [--brief|--github] [--since REF]  # MEMORY-HEALTH; exit 1 when broken
-rmem recall "add a new payment provider"   # bounded context block for a task
-rmem compile                               # emit conventions + hazards into AGENTS.md
-rmem add ... --key refund.window_days --value 90  # a claim: comparable with other claims
-rmem verify <id> [--anchor glob] [--resolved-by S]  # "still true" — re-stamp / narrow
-rmem verify <id> --coexists-with <other> --coexists-why "..."   # both true, on purpose
-rmem supersede <old-id> <new-id>           # was true, now replaced
-rmem retract <id> --reason "..."           # was NEVER true — keeps the text, labels it
-rmem rm <id>                               # must not exist at all — deletes the block
-rmem list
+agentlore check [--brief|--github] [--since REF]  # MEMORY-HEALTH; exit 1 when broken
+agentlore recall "add a new payment provider"   # bounded context block for a task
+agentlore compile                               # emit conventions + hazards into AGENTS.md
+agentlore add ... --key refund.window_days --value 90  # a claim: comparable with other claims
+agentlore verify <id> [--anchor glob] [--resolved-by S]  # "still true" — re-stamp / narrow
+agentlore verify <id> --coexists-with <other> --coexists-why "..."   # both true, on purpose
+agentlore supersede <old-id> <new-id>           # was true, now replaced
+agentlore retract <id> --reason "..."           # was NEVER true — keeps the text, labels it
+agentlore rm <id>                               # must not exist at all — deletes the block
+agentlore list
 ```
 
 Types: `decision`, `dead-end`, `convention`, `hazard`.
@@ -47,7 +47,7 @@ Collapsing them into "delete" loses the evidence a reviewer needs.
 
 ### `rm` — for one case only
 
-`rmem rm <id>` deletes the entry block. It exists for text that must not be in the repository
+`agentlore rm <id>` deletes the entry block. It exists for text that must not be in the repository
 at all: a pasted customer name, a token, an internal URL. Everywhere else `retract` is the right
 verb, because deleting a memory removes the evidence along with the mistake.
 
@@ -70,12 +70,12 @@ a reviewable diff, which is the real safeguard.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0     # only improves the message; drift detection is content-based
-      - run: python3 tools/rmem index            # the index is derived; CI rebuilds it
+      - run: python3 tools/agentlore index            # the index is derived; CI rebuilds it
       - run: |                                   # exit 1 -> the PR is blocked
-          python3 tools/rmem check --github \
+          python3 tools/agentlore check --github \
             --since "${{ github.event.pull_request.base.sha }}"
       - run: |
-          python3 tools/rmem compile
+          python3 tools/agentlore compile
           git diff --exit-code AGENTS.md         # committed AGENTS.md must match .memory/
 ```
 

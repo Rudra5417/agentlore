@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the rmem test suite.
+"""Run the agentlore test suite.
 
     python3 run_tests.py
 
@@ -59,13 +59,13 @@ def main():
         "python         : %s\n"
         "PYTHONHASHSEED : %s\n"
         "platform       : %s\n"
-        "rmem sha256[:16]: %s\n"
+        "agentlore sha256[:16]: %s\n"
         "failing        : %s\n\n%s" % (
             " ".join(sys.argv),
             sys.version.split()[0],
             os.environ.get("PYTHONHASHSEED", "(unset)"),
             sys.platform,
-            hashlib.sha256((ROOT / "rmem").read_bytes()).hexdigest()[:16],
+            hashlib.sha256((ROOT / "agentlore").read_bytes()).hexdigest()[:16],
             "\n                 ".join(names),
             buffer.getvalue()))
     print("\nFAILING: %s" % ", ".join(names))

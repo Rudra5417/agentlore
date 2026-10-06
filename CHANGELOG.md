@@ -8,8 +8,8 @@ them:
 
 | stream | what it is | today |
 |---|---|---|
-| **`v1`** (major channel) | the **action interface** — the contract `uses: Rudra5417/rmem@v1` depends on. A moving tag, updated as the tool improves, exactly like `actions/checkout@v4`. | `v1` |
-| **`v0.x`** (product) | the **tool** — `rmem --version`, the CLI you run locally. | `0.8.0` |
+| **`v1`** (major channel) | the **action interface** — the contract `uses: Rudra5417/agentlore@v1` depends on. A moving tag, updated as the tool improves, exactly like `actions/checkout@v4`. | `v1` |
+| **`v0.x`** (product) | the **tool** — `agentlore --version`, the CLI you run locally. | `0.9.0` |
 
 `v1.0.0` and `v1.0.1` were tagged as if the product were 1.0. Development carried on at `0.x`,
 which is why they sit above later product releases in date order.
@@ -21,6 +21,22 @@ channel. The product reaches `1.0.0` when the honest-status table in the README 
 Notable entries are grouped by what they fixed, not by commit. Every release notes its evidence.
 
 ---
+
+## v0.9.0 — 2026-10-06 — the name was invisible, so it changed
+
+The tool was called `rmem`. Search that and you get Cambridge's relaxed-memory model, an academic
+video-segmentation paper, and a motor-refurbishment firm — not this. A dev tool that cannot be found
+by name starts every launch behind. Renamed to **agentlore** everywhere: the CLI, the action, the
+docs, the examples, the tests.
+
+- 40 files and 3 paths renamed (`agentlore`, `tests/test_agentlore.py`,
+  `examples/billing-service/tools/agentlore`). `--version` reports `0.9.0`.
+- Packaging added (`pyproject.toml`), so `uv tool install` / `pipx install` / `pip install` work
+  alongside the single-file curl install. The zero-dependency, self-contained file is unchanged —
+  the package is a wrapper around it, not a replacement.
+- Repository renamed to `Rudra5417/agentlore`; old URLs redirect.
+
+Evidence: 114 tests, CI green.
 
 ## v0.8.0 — 2026-09-29 — a memory is an instruction, so the gate reads it as one
 
@@ -72,7 +88,7 @@ sentinel default, and a blank value is refused with exit 1 without touching anyt
 
 ## v0.6.0 — 2026-09-29 — the memory you recorded but never delivered
 
-New check `compile-current`: the committed block in `AGENTS.md` must be what `rmem compile` would
+New check `compile-current`: the committed block in `AGENTS.md` must be what `agentlore compile` would
 produce now. Uncompiled memory is memory nothing delivers, and the failure is silent in every
 direction. It abstains when there is no `AGENTS.md` or no compiled block, because not every repo
 compiles to one.
@@ -92,6 +108,6 @@ succeeding quietly.
 
 ## v1.0.0 — 2026-09-28 — repo memory that can be checked
 
-First published action: `uses: Rudra5417/rmem@v1`. Typed memories in `.memory/`, a compiled
+First published action: `uses: Rudra5417/agentlore@v1`. Typed memories in `.memory/`, a compiled
 `AGENTS.md`, and a gate that fails a pull request when code moves under a memory and the memory
 does not.

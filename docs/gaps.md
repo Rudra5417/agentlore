@@ -2,7 +2,7 @@
 
 > What is not built, stated plainly, and what realistic adoption looks like.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Known gaps in this prototype
 
@@ -15,7 +15,7 @@
   "silent pass" and the fix is in your checkout config.
 * **No conflict queue as a separate artifact.** `gitmem` emits a browsable `conflicts.json`;
   here a contradiction is a failing check, so it is enforced rather than advisory.
-* **No `rmem move`/re-anchor workflow.** Changing which files a memory covers means
+* **No `agentlore move`/re-anchor workflow.** Changing which files a memory covers means
   `verify --anchor`, which also re-stamps it; there is no way to re-scope without asserting
   it is still true.
 * **CODEOWNERS matching is best-effort**, not GitHub's matcher. It errs toward finding a rule,
@@ -23,11 +23,11 @@
 * **Retrieval is term-overlap scoring, not semantic.** Agents read `.memory/*.md` directly in
   testing and never called `recall`, so this matters only past ~100 entries. FTS5 is available.
 * **No monorepo scoping.** `lore` detects eight build systems and scopes memory per package;
-  `rmem` has flat anchors.
-* **No compression.** `lore` digests at 500 entries. `rmem` has no answer for growth.
+  `agentlore` has flat anchors.
+* **No compression.** `lore` digests at 500 entries. `agentlore` has no answer for growth.
 * **No history sweep for `rm`.** The tool warns that history is untouched but cannot tell you
   whether a given string ever appeared in a memory. `git log -S` does that, unassisted.
-* **Not listed on the Marketplace yet.** The action is consumed by tag (`Rudra5417/rmem@v1`),
+* **Not listed on the Marketplace yet.** The action is consumed by tag (`Rudra5417/agentlore@v1`),
   which is all `uses:` needs. As of v0.8.0 the published release exists, so listing is one
   web-UI step away (publisher settings plus the Marketplace tick, which needs 2FA). Held on
   purpose, not blocked.

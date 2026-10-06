@@ -1,6 +1,6 @@
 # INTEGRATION.md — how repo memory actually reaches an agent
 
-`rmem` writes memory into `.memory/` and compiles the always-on subset into `AGENTS.md`.
+`agentlore` writes memory into `.memory/` and compiles the always-on subset into `AGENTS.md`.
 Whether an agent ever **sees** that memory is a property of the **host tool**, not of the
 model and not of the memory. A host that does not load `AGENTS.md` does not get the memory,
 no matter how good the memory is.
@@ -12,7 +12,7 @@ Read this before assuming a gate that runs is a gate that works.
 | half | what it is | where it is wired |
 |---|---|---|
 | **Delivered** | `AGENTS.md` carries house rules, frozen areas, and rejected approaches | the agent's own startup context loading |
-| **Enforced** | `rmem check` fails a PR when memory goes stale or contradicts itself | CI, via the published action |
+| **Enforced** | `agentlore check` fails a PR when memory goes stale or contradicts itself | CI, via the published action |
 
 Both are needed. Memory the agent never reads changes nothing; memory nothing checks rots.
 The action half is covered in the README (`Use it as a GitHub Action`). This file covers the
@@ -42,7 +42,7 @@ For Hermes the mechanism is in the source rather than a doc page: `agent/prompt_
 ## Keep it small — every host truncates
 
 `AGENTS.md` lands in the context window of every session, so the cap is a real constraint,
-and `rmem compile` bounds its output for exactly this reason.
+and `agentlore compile` bounds its output for exactly this reason.
 
 | host | limit |
 |---|---|
@@ -61,7 +61,7 @@ Hermes, Codex, Cursor, and Copilot all resolve the **nearest** `AGENTS.md` walki
 tree, and Codex supports `AGENTS.override.md` per directory. So the standard shape is a root
 `AGENTS.md` plus one per package.
 
-**Current limit:** `rmem compile` writes **one** `AGENTS.md` at the memory root. Publishing
+**Current limit:** `agentlore compile` writes **one** `AGENTS.md` at the memory root. Publishing
 per-package summaries is not built — see the gap list in the README.
 
 ## Gotchas that will bite
@@ -103,7 +103,7 @@ Never assume. Ask the agent directly, in a session in the repo:
 
 ```yaml
 # .github/workflows/memory-health.yml  -- the enforced half
-- uses: Rudra5417/rmem@v1
+- uses: Rudra5417/agentlore@v1
   with:
     since: ${{ github.event.pull_request.base.sha }}
 ```
@@ -111,10 +111,10 @@ Never assume. Ask the agent directly, in a session in the repo:
 Then, once per repo:
 
 ```bash
-rmem init                              # create .memory/
-rmem add --type convention ...         # record a house rule
-rmem compile                           # emit AGENTS.md  <- the delivered half
-rmem check --brief                     # MEMORY-HEALTH: N/N GREEN
+agentlore init                              # create .memory/
+agentlore add --type convention ...         # record a house rule
+agentlore compile                           # emit AGENTS.md  <- the delivered half
+agentlore check --brief                     # MEMORY-HEALTH: N/N GREEN
 ```
 
 Commit `AGENTS.md` and `.memory/`; gitignore `**/.memory/index.db`. If `AGENTS.md` is not

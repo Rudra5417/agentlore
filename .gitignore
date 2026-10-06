@@ -1,5 +1,5 @@
 # The SQLite index is a derived build artifact. Markdown is the source of truth,
-# so this is rebuilt with `rmem index` and never reviewed or merged.
+# so this is rebuilt with `agentlore index` and never reviewed or merged.
 **/.memory/index.db
 
 # Python
@@ -24,3 +24,10 @@ bench/loop/runs/
 bench/loop/logs/
 bench/loop/gateruns/
 bench/loop/gatelogs/
+
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+.venv/
+venv/

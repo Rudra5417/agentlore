@@ -1,3 +1,3 @@
 # Dead ends
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->

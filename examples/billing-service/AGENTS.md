@@ -1,6 +1,6 @@
 # AGENTS.md
 
-<!-- rmem:begin (generated from .memory/ - do not edit) -->
+<!-- agentlore:begin (generated from .memory/ - do not edit) -->
 ## House rules
 
 - **Use httpx, never requests** `src/api/**`
@@ -14,4 +14,4 @@ _Tried and rejected. Do not re-try these. The reason and the way out are recorde
 
 - **Direct provider SDK calls from handlers** `src/api/**`
 
-<!-- rmem:end -->
+<!-- agentlore:end -->

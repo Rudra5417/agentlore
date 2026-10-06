@@ -2,7 +2,7 @@
 
 > Why a memory is a worse place for a secret than ordinary source, and the two guards.
 
-> Part of [rmem](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
+> Part of [agentlore](../README.md) — adopt it via [INTEGRATION.md](../INTEGRATION.md).
 
 ## Secrets and personal data in `.memory/`
 
@@ -14,7 +14,7 @@ machine that holds credentials.
 So there are two guards, because there are two ways a secret gets in:
 
 ```console
-$ rmem add --type decision --title "Prod keys" \
+$ agentlore add --type decision --title "Prod keys" \
     --body "gateway_token: REDACTEDFORTESTING0123456789ab" ...
 refused: this memory looks like it carries a secret or personal data.
     line 15: a secret-looking assignment  [RE****************]

@@ -1,9 +1,9 @@
 # Conventions
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->
 
 ## Import thing, never reach past it
-<!-- rmem
+<!-- agentlore
 id: CONV-2026-09-28-4305
 type: convention
 status: accepted

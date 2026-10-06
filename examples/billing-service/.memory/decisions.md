@@ -1,9 +1,9 @@
 # Decisions
 
-<!-- rmem: one entry per '## ' heading -->
+<!-- agentlore: one entry per '## ' heading -->
 
 ## Billing goes through the gateway (superseded)
-<!-- rmem
+<!-- agentlore
 id: DEC-2026-09-27-6e39
 type: decision
 status: superseded
@@ -17,7 +17,7 @@ verified_at: 81de8f1
 All charges and refunds must go through src/billing/gateway.py so we keep one place for retries, idempotency keys and audit logging. Direct provider calls bypass all three.
 
 ## Billing goes through the gateway
-<!-- rmem
+<!-- agentlore
 id: DEC-2026-09-27-5ca9
 type: decision
 status: accepted
