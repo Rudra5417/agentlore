@@ -1,0 +1,48 @@
+name: publish
+
+# Publishes to PyPI using Trusted Publishing (OIDC) -- no API token stored anywhere.
+#
+# One-time setup, on PyPI (not in this repo):
+#   https://pypi.org/manage/account/publishing/
+#     PyPI Project Name: agentlore
+#     Owner:             Rudra5417
+#     Repository name:   agentlore
+#     Workflow name:     publish.yml
+#     Environment name:  pypi
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Build sdist and wheel
+        run: uv build
+      - name: Check the built artifacts
+        run: uvx twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/agentlore
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

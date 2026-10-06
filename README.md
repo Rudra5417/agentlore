@@ -15,7 +15,7 @@ them somewhere to live: typed markdown in `.memory/`, versioned with the code, c
 
 One file. Python standard library. No dependencies, no service, no account, nothing to configure.
 
-Current release **v0.9.0** · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
+Current release **v0.9.0** · [site](https://rudra5417.github.io/agentlore/) · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
 
 ---
 
@@ -70,7 +70,7 @@ direction. [The accuracy gate, in full →](docs/design.md#the-accuracy-gate)
 
 ## Install
 
-One 84 KB Python file with no dependencies, so there is nothing to install in the package-manager
+One 89 KB Python file with no dependencies, so there is nothing to install in the package-manager
 sense — you pick how much of it you want to own.
 
 **Requirements:** Python **3.9+** (CI runs 3.9 and 3.12) and `git`. That is the whole list: no

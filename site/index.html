@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentlore — repo memory that can't rot</title>
+<meta name="description" content="agentlore keeps the decisions, dead ends and hazards your coding agent learns — as a diff in the PR that motivated them, with a CI gate that fails when the memory stops being true.">
+<meta property="og:title" content="agentlore — repo memory that can't rot">
+<meta property="og:description" content="Git-reviewable repo memory for coding agents. One zero-dependency Python file.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📜</text></svg>">
+<style>
+  :root{
+    --cyan:#2dd4f7; --violet:#8b5cf6;
+    --bg:#07080c; --bg-2:#0b0d14;
+    --fg:#e8ecf4; --muted:#8b93a7; --dim:#5a6377;
+    --line:rgba(255,255,255,.09);
+    --card:rgba(255,255,255,.025);
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    --max:1080px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);
+    font-family:var(--sans);line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:
+      radial-gradient(900px 500px at 15% -5%, rgba(45,212,247,.10), transparent 60%),
+      radial-gradient(800px 500px at 85% 5%, rgba(139,92,246,.10), transparent 60%),
+      linear-gradient(transparent 0 39px, rgba(255,255,255,.018) 39px 40px),
+      linear-gradient(90deg, transparent 0 39px, rgba(255,255,255,.018) 39px 40px);
+    background-size:auto,auto,40px 40px,40px 40px;
+    mask-image:radial-gradient(ellipse 100% 70% at 50% 0%, #000 40%, transparent 100%);
+  }
+  .wrap{position:relative;z-index:1;max-width:var(--max);margin:0 auto;padding:0 24px}
+  a{color:inherit}
+  code,kbd{font-family:var(--mono)}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(14px);
+      background:rgba(7,8,12,.72);border-bottom:1px solid var(--line)}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-weight:600;
+         letter-spacing:-.02em;text-decoration:none;font-size:15px}
+  .brand svg{width:20px;height:20px}
+  .nlinks{display:flex;gap:22px;align-items:center;font-size:13.5px;color:var(--muted)}
+  .nlinks a{text-decoration:none;transition:color .18s}
+  .nlinks a:hover{color:var(--fg)}
+  @media(max-width:640px){.nlinks a.opt{display:none}}
+
+  /* ---------- hero ---------- */
+  header{padding:86px 0 72px}
+  .pill{display:inline-flex;align-items:center;gap:9px;font-family:var(--mono);font-size:11.5px;
+        color:var(--muted);border:1px solid var(--line);border-radius:999px;
+        padding:5px 13px;background:var(--card)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan);
+       box-shadow:0 0 10px var(--cyan);animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  h1{font-size:clamp(38px,6.4vw,68px);line-height:1.03;letter-spacing:-.035em;
+     margin:26px 0 0;font-weight:700}
+  h1 .grad{background:linear-gradient(100deg,var(--cyan),var(--violet) 70%);
+           -webkit-background-clip:text;background-clip:text;color:transparent}
+  .sub{font-size:clamp(16px,2.1vw,19.5px);color:var(--muted);max-width:660px;margin:24px 0 0}
+  .sub b{color:var(--fg);font-weight:600}
+  .cta{display:flex;gap:12px;flex-wrap:wrap;margin-top:34px;align-items:center}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:11px 20px;border-radius:9px;
+       font-size:14px;font-weight:600;text-decoration:none;border:1px solid var(--line);
+       background:var(--card);transition:transform .16s,border-color .16s,background .16s}
+  .btn:hover{transform:translateY(-1px);border-color:rgba(45,212,247,.45);background:rgba(45,212,247,.06)}
+  .btn.primary{background:linear-gradient(100deg,rgba(45,212,247,.16),rgba(139,92,246,.16));
+       border-color:rgba(45,212,247,.4)}
+  .btn.primary:hover{background:linear-gradient(100deg,rgba(45,212,247,.24),rgba(139,92,246,.24))}
+
+  /* ---------- install bar ---------- */
+  .install{margin-top:34px;max-width:560px;display:flex;align-items:center;gap:10px;
+     background:#0d0f17;border:1px solid var(--line);border-radius:10px;padding:12px 14px;
+     font-family:var(--mono);font-size:13.5px;position:relative;min-width:0}
+  .install .p{color:var(--dim);user-select:none}
+  .install code{color:var(--cyan);overflow-x:auto;white-space:nowrap;flex:1;min-width:0}
+  .install button{background:none;border:1px solid var(--line);color:var(--muted);
+     border-radius:6px;padding:4px 10px;font-size:11px;font-family:var(--mono);cursor:pointer;
+     transition:.16s;flex-shrink:0}
+  .install button:hover{color:var(--cyan);border-color:rgba(45,212,247,.45)}
+  .hint{font-size:12.5px;color:var(--dim);margin-top:12px;font-family:var(--mono)}
+
+  /* ---------- terminal ---------- */
+  .term{margin:52px 0 0;background:#0a0c12;border:1px solid var(--line);border-radius:13px;
+        overflow:hidden;box-shadow:0 30px 80px -30px rgba(0,0,0,.9)}
+  .tbar{display:flex;align-items:center;gap:8px;padding:11px 15px;
+        border-bottom:1px solid var(--line);background:rgba(255,255,255,.02)}
+  .td{width:11px;height:11px;border-radius:50%}
+  .tbar span{margin-left:8px;font-family:var(--mono);font-size:11.5px;color:var(--dim)}
+  .tterm{padding:20px 22px;font-family:var(--mono);font-size:13px;line-height:1.75;
+         overflow-x:auto}
+  .tterm pre{margin:0;white-space:pre}
+  .c-dim{color:var(--dim)}
+  .c-cy{color:var(--cyan)}
+  .c-vi{color:#a78bfa}
+  .c-red{color:#fb7185}
+  .c-grn{color:#4ade80}
+  .c-amb{color:#fbbf24}
+
+  /* ---------- sections ---------- */
+  section{padding:74px 0}
+  .eyebrow{font-family:var(--mono);font-size:12px;color:var(--cyan);letter-spacing:.09em;
+           text-transform:uppercase;margin:0 0 14px}
+  h2{font-size:clamp(26px,3.6vw,37px);line-height:1.15;letter-spacing:-.028em;margin:0 0 18px;
+     font-weight:700;max-width:760px}
+  h3{font-size:17px;margin:0 0 8px;letter-spacing:-.012em}
+  p.lead{color:var(--muted);font-size:16.5px;max-width:720px;margin:0 0 18px}
+  p{color:var(--muted);max-width:720px}
+  .grid{display:grid;gap:16px;margin-top:34px}
+  .grid>*{min-width:0}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}
+  .g4{grid-template-columns:repeat(auto-fit,minmax(215px,1fr))}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:22px;
+        transition:border-color .2s,transform .2s;min-width:0}
+  .card pre{min-width:0;max-width:100%}
+  .card:hover{border-color:rgba(45,212,247,.3);transform:translateY(-2px)}
+  .card p{font-size:14px;margin:0}
+  .num{font-family:var(--mono);font-size:12px;color:var(--violet);margin-bottom:10px;display:block}
+  .stat{font-family:var(--mono);font-size:29px;color:var(--fg);letter-spacing:-.02em;font-weight:600}
+  .stat-label{font-size:13px;color:var(--dim);margin-top:4px}
+
+  table{width:100%;border-collapse:collapse;margin-top:30px;font-size:14px}
+  th,td{text-align:left;padding:13px 15px;border-bottom:1px solid var(--line)}
+  th{font-family:var(--mono);font-size:11.5px;color:var(--dim);text-transform:uppercase;
+     letter-spacing:.07em;font-weight:500}
+  td:first-child{color:var(--fg)}
+  td{color:var(--muted)}
+  .yes{color:var(--cyan)}
+  .no{color:var(--dim)}
+  .scroll{overflow-x:auto}
+
+  html.js .reveal{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.16,1,.3,1),
+          transform .7s cubic-bezier(.16,1,.3,1)}
+  html.js .reveal.in{opacity:1;transform:none}
+
+  footer{border-top:1px solid var(--line);padding:40px 0 60px;margin-top:30px}
+  footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+               font-size:13.5px;color:var(--dim)}
+  footer a{text-decoration:none;color:var(--muted)}
+  footer a:hover{color:var(--cyan)}
+</style>
+<script>document.documentElement.className += ' js';</script>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M4 4.5A1.5 1.5 0 0 1 5.5 3H16l4 4v13.5A1.5 1.5 0 0 1 18.5 22h-13A1.5 1.5 0 0 1 4 20.5z"
+              stroke="url(#g)" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M15.5 3v4.5H20" stroke="url(#g)" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M8 12h8M8 15.5h5" stroke="url(#g)" stroke-width="1.6" stroke-linecap="round"/>
+        <defs><linearGradient id="g" x1="4" y1="3" x2="20" y2="22">
+          <stop stop-color="#2dd4f7"/><stop offset="1" stop-color="#8b5cf6"/>
+        </linearGradient></defs>
+      </svg>
+      agentlore
+    </a>
+    <div class="nlinks">
+      <a class="opt" href="#problem">The problem</a>
+      <a class="opt" href="#how">How it works</a>
+      <a class="opt" href="#gate">The gate</a>
+      <a class="opt" href="#install">Install</a>
+      <a href="https://github.com/Rudra5417/agentlore">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<a id="top"></a>
+<header>
+  <div class="wrap">
+    <span class="pill"><span class="dot"></span> v0.9.0 · MIT · zero dependencies</span>
+    <h1>Repo memory<br>that <span class="grad">can't rot.</span></h1>
+    <p class="sub">Your coding agent learns something every session — and forgets it every session.
+      <b>agentlore</b> keeps the decisions, dead ends, conventions and hazards it learns as a
+      <b>diff in the PR that motivated them</b>, and fails CI when that memory stops being true.</p>
+
+    <div class="install">
+      <span class="p">$</span>
+      <code id="cmd">uv tool install agentlore</code>
+      <button id="copy" aria-label="Copy install command">copy</button>
+    </div>
+    <div class="hint">one Python file · standard library only · no service, no account, nothing to configure</div>
+
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/Rudra5417/agentlore">Read the source</a>
+      <a class="btn" href="https://github.com/Rudra5417/agentlore/blob/main/docs/design.md">The design doc</a>
+      <a class="btn" href="https://github.com/Rudra5417/agentlore/blob/main/docs/gaps.md">What it doesn't do yet</a>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="term reveal">
+    <div class="tbar">
+      <span class="td" style="background:#ff5f57"></span>
+      <span class="td" style="background:#febc2e"></span>
+      <span class="td" style="background:#28c840"></span>
+      <span>billing-service — the change that settled its own dead end</span>
+    </div>
+    <div class="tterm"><pre><span class="c-dim">$</span> agentlore check --since <span class="c-vi">"$BASE_SHA"</span>
+<span class="c-red">MEMORY-HEALTH: 17/18 BROKEN</span>  <span class="c-dim">(1 memories, 0 stale, billing)</span>
+  <span class="c-red">FAIL</span> dead-ends-settled  <span class="c-dim">-- 1 unsettled</span>
+
+<span class="c-dim">dead ends that rode the change that settled them:</span>
+  DEAD-2026-09-29-95f7  The refund window rejects credit notes too
+    <span class="c-dim">anchored to</span> src/billing/**<span class="c-dim">, changed in this same change:</span> src/billing/gateway.py
+    <span class="c-dim">-&gt; this memory now reads as a live warning about a condition your change removed.</span>
+
+<span class="c-dim">$</span> agentlore verify DEAD-2026-09-29-95f7 <span class="c-vi">--resolved-by</span> <span class="c-vi">"vendor supports credit notes as of v3.2"</span>
+verified DEAD-2026-09-29-95f7 <span class="c-dim">@ b5c646d</span>
+
+<span class="c-dim">$</span> agentlore check --brief
+<span class="c-amb">MEMORY-HEALTH: 17/18 BROKEN</span> -- compile-current  <span class="c-dim"># the file your agent reads is now stale</span>
+<span class="c-dim">$</span> agentlore compile &amp;&amp; agentlore check --brief
+<span class="c-grn">MEMORY-HEALTH: 18/18 GREEN</span></pre></div>
+  </div>
+</div>
+
+<section id="problem">
+  <div class="wrap">
+    <p class="eyebrow reveal">The failure it exists for</p>
+    <h2 class="reveal">A memory is true when written, and false the moment the fix lands.</h2>
+    <p class="lead reveal">An agent fixes a bug, and records the dead end it just disproved. The note
+      is accurate — and it now reads as a live warning to every future agent that touches that code.
+      Nobody re-reads it. Nothing catches it. The next agent routes around a wall that was already
+      torn down.</p>
+    <p class="reveal">The agent's prose hedged (<em>"before the fix"</em>). The heading did not — and the
+      heading is the first thing the next agent reads. So agentlore rewrites it rather than trusting
+      anyone to remember.</p>
+
+    <div class="grid g2" style="margin-top:38px">
+      <div class="card reveal"><span class="num">01</span><h3>Memory that can go stale</h3>
+        <p>Every entry is anchored to a path and carries evidence. When the anchored code moves, the gate notices — not the reviewer.</p></div>
+      <div class="card reveal"><span class="num">02</span><h3>Memory that never ships</h3>
+        <p><code>compile-current</code> checks the file your agent actually loads, not just the file you wrote. Recorded-but-undelivered memory is invisible in every direction.</p></div>
+      <div class="card reveal"><span class="num">03</span><h3>Memory nobody reviewed</h3>
+        <p>It lands as a diff in the PR that motivated it — reviewed like any other change, in the same review, by the same people.</p></div>
+      <div class="card reveal"><span class="num">04</span><h3>Memory that is an instruction</h3>
+        <p><code>.memory/</code> compiles into <code>AGENTS.md</code>, so an entry is a persistent instruction. The gate refuses entries that tell an agent to conceal, to skip the gate, or to weaken a control.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <p class="eyebrow reveal">How it works</p>
+    <h2 class="reveal">Four commands, and a gate that refuses to be talked out of it.</h2>
+    <div class="grid g4">
+      <div class="card reveal"><span class="num">1</span><h3>Record</h3>
+        <p><code>agentlore add</code> writes a typed entry — decision, dead end, convention or hazard — with the evidence that produced it.</p></div>
+      <div class="card reveal"><span class="num">2</span><h3>Compile</h3>
+        <p><code>agentlore compile</code> folds the memory into the <code>AGENTS.md</code> your agent already reads. Nothing new to configure.</p></div>
+      <div class="card reveal"><span class="num">3</span><h3>Gate</h3>
+        <p><code>agentlore check</code> runs 18 checks in CI and fails the build when memory rots. It can annotate the exact file that drifted.</p></div>
+      <div class="card reveal"><span class="num">4</span><h3>Review</h3>
+        <p>The memory rides the pull request. It is reviewed, versioned and revertible like every other line in the repo.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="gate">
+  <div class="wrap">
+    <p class="eyebrow reveal">The gate</p>
+    <h2 class="reveal">It fails closed, on purpose.</h2>
+    <p class="lead reveal">A guard that cannot read its own state has not guarded anything. If the
+      index is unreadable, if a <code>--since</code> ref cannot be resolved, if an id would be
+      ambiguous — agentlore stops rather than passing quietly.</p>
+
+    <div class="grid g4" style="margin-top:36px">
+      <div class="card reveal"><div class="stat">18</div><div class="stat-label">checks in the gate</div></div>
+      <div class="card reveal"><div class="stat">114</div><div class="stat-label">tests in the suite</div></div>
+      <div class="card reveal"><div class="stat">0</div><div class="stat-label">third-party dependencies</div></div>
+      <div class="card reveal"><div class="stat">1</div><div class="stat-label">file you have to audit</div></div>
+    </div>
+
+    <div class="scroll reveal" style="margin-top:40px">
+      <table>
+        <thead><tr><th>&nbsp;</th><th>A plain AGENTS.md</th><th>agentlore</th></tr></thead>
+        <tbody>
+          <tr><td>Reviewed in the PR that motivated it</td><td class="no">no</td><td class="yes">yes</td></tr>
+          <tr><td>Fails CI when an entry stops being true</td><td class="no">no</td><td class="yes">yes</td></tr>
+          <tr><td>Checks the compiled file your agent loads</td><td class="no">no</td><td class="yes">yes</td></tr>
+          <tr><td>Typed entries (dead end ≠ decision ≠ hazard)</td><td class="no">no</td><td class="yes">yes</td></tr>
+          <tr><td>Lives in git, no service or account</td><td class="yes">yes</td><td class="yes">yes</td></tr>
+          <tr><td>Zero dependencies</td><td class="yes">yes</td><td class="yes">yes</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="reveal" style="margin-top:22px;font-size:14px">Where a plain <code>AGENTS.md</code> is a
+      file, agentlore is that file <em>plus</em> the record of why each line is there, the change that
+      put it there, and a gate that notices when it stops being true.</p>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <p class="eyebrow reveal">Install</p>
+    <h2 class="reveal">Pick how much of it you want to own.</h2>
+    <p class="lead reveal">It is one Python file with no dependencies, so there is nothing to resolve,
+      pin or audit beyond the repository itself.</p>
+
+    <div class="grid g2" style="margin-top:34px">
+      <div class="card reveal"><h3>As a GitHub Action</h3>
+        <p style="margin-bottom:12px">Usually the right answer — the gate is the part that has to run on every PR.</p>
+        <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>uses: Rudra5417/agentlore@v1
+with:
+  since: ${{ github.event.pull_request.base.sha }}</code></pre></div>
+      <div class="card reveal"><h3>From a package index</h3>
+        <p style="margin-bottom:12px">A managed copy of the same file.</p>
+        <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>uv tool install agentlore
+pipx install agentlore
+pip install agentlore</code></pre></div>
+      <div class="card reveal"><h3>Vendored into your repo</h3>
+        <p style="margin-bottom:12px">You own the file: CI needs no network fetch and no action dependency.</p>
+        <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>curl -fsSL -o tools/agentlore \
+  https://raw.githubusercontent.com/\
+Rudra5417/agentlore/v0.9.0/agentlore
+chmod +x tools/agentlore</code></pre></div>
+      <div class="card reveal"><h3>On your PATH</h3>
+        <p style="margin-bottom:12px">For local use, and for an agent to call.</p>
+        <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>curl -fsSL -o ~/.local/bin/agentlore \
+  https://raw.githubusercontent.com/\
+Rudra5417/agentlore/v0.9.0/agentlore
+chmod +x ~/.local/bin/agentlore</code></pre></div>
+    </div>
+
+    <div class="install" style="margin-top:34px">
+      <span class="p">$</span>
+      <code>agentlore init &amp;&amp; agentlore check --brief</code>
+    </div>
+    <div class="hint">MEMORY-HEALTH: 18/18 GREEN &nbsp;— an empty .memory/ is green on purpose</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>agentlore · MIT · built by <a href="https://github.com/Rudra5417">Rudra5417</a></div>
+    <div>
+      <a href="https://github.com/Rudra5417/agentlore">GitHub</a> ·
+      <a href="https://github.com/Rudra5417/agentlore/blob/main/CHANGELOG.md">Changelog</a> ·
+      <a href="https://github.com/Rudra5417/agentlore/blob/main/docs/design.md">Design</a> ·
+      <a href="https://github.com/Rudra5417/agentlore/blob/main/docs/gaps.md">Gaps</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // copy the install command
+  var btn = document.getElementById('copy');
+  btn.addEventListener('click', function () {
+    var t = document.getElementById('cmd').textContent;
+    navigator.clipboard.writeText(t).then(function () {
+      btn.textContent = 'copied';
+      setTimeout(function () { btn.textContent = 'copy'; }, 1600);
+    });
+  });
+
+  // reveal on scroll -- with a hard fallback so content is never trapped invisible
+  var els = document.querySelectorAll('.reveal');
+  function revealAll() {
+    els.forEach(function (el) { el.classList.add('in'); });
+  }
+
+  if (!('IntersectionObserver' in window)) {
+    revealAll();
+  } else {
+    var seen = 0;
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add('in'); seen++; io.unobserve(e.target); }
+      });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+    els.forEach(function (el, i) {
+      el.style.transitionDelay = (Math.min(i, 6) * 45) + 'ms';
+      io.observe(el);
+    });
+    // If the observer never fires (some headless renderers, embedded webviews,
+    // link-preview crawlers), stop hiding content rather than leaving a blank page.
+    setTimeout(function () { if (seen === 0) revealAll(); }, 1800);
+  }
+</script>
+</body>
+</html>
