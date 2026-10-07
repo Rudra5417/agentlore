@@ -16,7 +16,7 @@ them somewhere to live: typed markdown in `.memory/`, versioned with the code, c
 
 One file. Python standard library. No dependencies, no service, no account, nothing to configure.
 
-Current release **v0.9.0** · [site](https://rudra5417.github.io/agentlore/) · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
+Current release **v0.9.1** · [site](https://rudra5417.github.io/agentlore/) · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
 
 ![agentlore in a terminal: a settled dead end fails the gate, verify resolves it, the gate goes green](site/demo.gif)
 
@@ -104,7 +104,7 @@ organisations require this.
 
 ```bash
 mkdir -p tools
-curl -fsSL -o tools/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.0/agentlore
+curl -fsSL -o tools/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.1/agentlore
 chmod +x tools/agentlore
 git add tools/agentlore
 python3 tools/agentlore check --brief          # runs with no install at all
@@ -120,9 +120,9 @@ Worth it if you want an agent to run `agentlore` itself, or to check memories be
 
 ```bash
 mkdir -p ~/.local/bin
-curl -fsSL -o ~/.local/bin/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.0/agentlore
+curl -fsSL -o ~/.local/bin/agentlore https://raw.githubusercontent.com/Rudra5417/agentlore/v0.9.1/agentlore
 chmod +x ~/.local/bin/agentlore
-agentlore --version                            # agentlore 0.9.0
+agentlore --version                            # agentlore 0.9.1
 ```
 
 If `~/.local/bin` is not already on your `PATH`, add it (`export PATH="$HOME/.local/bin:$PATH"`).
@@ -135,7 +135,7 @@ A managed copy of the same file, for when you would rather not vendor or curl it
 
 ```bash
 uv tool install agentlore        # or: pipx install agentlore   /   pip install agentlore
-agentlore --version              # agentlore 0.9.0
+agentlore --version              # agentlore 0.9.1
 ```
 
 The package ships the identical single, zero-dependency file — installing it resolves nothing.
@@ -215,18 +215,19 @@ Nothing here asks you to believe a claim that is not on this table.
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored and versioned in the repo | **proven** | 108 tests; the shipped example |
+| memory can be recorded, anchored and versioned in the repo | **proven** | 115 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: two annotations, then `success` once the same PR resolved it |
 | an ambiguous id or an unresolvable `--since` **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary` |
 | decided contradictions are caught | **proven, narrowly** | shared claim key + divergent value only; prose-vs-prose is deliberately out of scope |
 | every host reads the compiled memory | **mixed** | [INTEGRATION.md](INTEGRATION.md): most do; Gemini CLI needs config; all have truncation caps that silently drop the tail |
-| **memory makes an agent do better work** | **unproven** | [bench/](bench/README.md): a real null — and that fixture had no power to detect an effect |
+| **memory makes an agent do better work** | **preliminary** | [bench/](bench/README.md): trap rate 4-in-7 → 2-in-22, Fisher p = 0.018 — but the control arm is only n=7 (the gateway ran out of credit mid-run), so this is "pending a full control arm", not a result. An earlier fixture returned a real null. |
 | works in a monorepo | **unproven** | no per-package scoping; the `--relative` bug proved silent failure in subfolders |
 | safe against a poisoned memory | **no** | `.memory/` is privileged input to a machine with credentials; no signing, no tamper-evidence |
 
 `unproven` means the experiment has not been run, or it came back null — not that the result was
-inconvenient. [The full table, the agent trials, and how they were measured →](docs/evidence.md)
+inconvenient. `preliminary` means it ran and points somewhere, but the sample is too small to
+claim. [The full table, the agent trials, and how they were measured →](docs/evidence.md)
 
 ## How it differs
 
@@ -253,7 +254,7 @@ None checks whether it is *true*.
 | | |
 |---|---|
 | **[INTEGRATION.md](INTEGRATION.md)** | **Start here to adopt it.** Which hosts read `AGENTS.md` and which need config, what shadows it, the truncation caps that drop the tail, and the probe that proves the memory arrived. |
-| [docs/design.md](docs/design.md) | The three rules, all seventeen checks, the accuracy gate. |
+| [docs/design.md](docs/design.md) | The three rules, all eighteen checks, the accuracy gate. |
 | [docs/using.md](docs/using.md) | Full command reference, the memory lifecycle, CI wiring. |
 | [docs/contradictions.md](docs/contradictions.md) | What can be decided, what must never be guessed, and why. |
 | [docs/hazards.md](docs/hazards.md) | "Don't touch billing" — a pointer to a control, not a control. |
@@ -263,7 +264,7 @@ None checks whether it is *true*.
 | [bench/](bench/README.md) | The efficacy harness, the method, and the null. Re-run it against your repo. |
 
 ```bash
-python3 run_tests.py       # 108 tests, ~40s, stdlib only — same as the tool
+python3 run_tests.py       # 115 tests, ~40s, stdlib only — same as the tool
 ```
 
 CI runs the suite on Python 3.9 and 3.12, then puts the shipped example through its own memory gate

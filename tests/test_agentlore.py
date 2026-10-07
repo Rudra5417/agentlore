@@ -90,7 +90,11 @@ class Fixture:
         """Parse `check --brief` into a dict. Never raises on BROKEN."""
         code, out = self.agentlore("check", "--brief")
         first = out.strip().splitlines()[0]
-        m = re.match(r"MEMORY-HEALTH: (\d+)/(\d+) (GREEN|BROKEN)(?: -- (.*))?$", first)
+        # `not run` is a third state: the check could not run, so it is excluded from the
+        # denominator and named separately. It must never be parsed as a failure, and the
+        # failed-list capture stops at '(' so it cannot swallow the suffix.
+        m = re.match(r"MEMORY-HEALTH: (\d+)/(\d+) (GREEN|BROKEN)"
+                     r"(?: -- ([^(]*?))?(?: \(not run: ([^)]*)\))?$", first)
         assert m, "unparseable health line: %r" % first
         return {
             "code": code,
@@ -98,6 +102,7 @@ class Fixture:
             "total": int(m.group(2)),
             "green": m.group(3) == "GREEN",
             "failed": [s.strip() for s in (m.group(4) or "").split(",") if s.strip()],
+            "not_run": [s.strip() for s in (m.group(5) or "").split(",") if s.strip()],
             "brief": first,
             "out": out,
         }
@@ -144,8 +149,12 @@ class Base(unittest.TestCase):
 class TestBaseline(Base):
     def test_fresh_repo_is_green(self):
         h = self.f.health()
-        self.assertEqual(h["total"], 18)
         self.assertGreen(h)
+        # A fresh clone has a clean tree and no --since, so dead-ends-settled cannot see
+        # what changed. It is excluded from the denominator rather than counted as a pass:
+        # the score must never claim a check that did not run.
+        self.assertEqual(h["total"], 17)
+        self.assertEqual(h["not_run"], ["dead-ends-settled"])
 
     def test_unstamped_repo_fails_index_checks(self):
         f = Fixture(BASE_FILES)
@@ -826,6 +835,40 @@ class TestSinceBoundary(Base):
         self.f.agentlore("index")
         code, out = self.f.agentlore("check", "--brief", "--since", base)
         self.assertEqual(code, 0, out)
+
+    def test_a_missing_boundary_is_not_run_never_a_pass(self):
+        """The third state: no --since AND a clean tree means this check is blind.
+
+        That is the DEFAULT state in CI -- a checkout leaves a clean tree, and
+        `github.event.pull_request.base.sha` is empty on a push trigger -- so reporting it
+        as a pass would print a clean score for a gate that inspected nothing. It must be
+        excluded from the denominator and named, while an unresolvable --since still fails.
+        """
+        base = self.f.git("rev-parse", "HEAD").stdout.strip()
+        self.f.write("src/billing/charge.py", "def charge():\n    return 99\n")
+        self.f.add("--type", "dead-end",
+                   "--title", "The refund window rejects credit notes",
+                   "--body", "Settled by this change.",
+                   "--anchor", "src/billing/**", "--evidence", "observed in prod",
+                   "--author", "test")
+        self.f.commit("fix it and record it")
+        self.f.agentlore("index")
+
+        # Clean tree, no boundary: the change-scoped check cannot see, so it is excluded
+        # from the denominator and named -- never counted as a pass, never listed as a
+        # failure. (anchors-not-stale does still fire here, which is the honest part: the
+        # checks that CAN run keep reporting.)
+        h = self.f.health()
+        self.assertEqual(h["not_run"], ["dead-ends-settled"])
+        self.assertNotIn("dead-ends-settled", h["failed"],
+                         "a check that did not run must never be listed as a failure")
+        self.assertLess(h["total"], 18,
+                        "a check that did not run must be excluded from the denominator")
+
+        # With the boundary it fires -- which is what makes the case above a gap, not a bug.
+        code, out = self.f.agentlore("check", "--brief", "--since", base)
+        self.assertEqual(code, 1, "the gate must catch this once it can see:\n" + out)
+        self.assertIn("dead-ends-settled", out)
 
 
 class TestSubdirectoryLayout(Base):

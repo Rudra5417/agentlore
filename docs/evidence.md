@@ -13,19 +13,20 @@ not.**
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored, and versioned in the repo | **proven** | 108 tests; the shipped example |
+| memory can be recorded, anchored, and versioned in the repo | **proven** | 115 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: `memory-health: failure`, two annotations, then `success` when the same PR resolved it |
-| an ambiguous id, or an unresolvable `--since`, **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `agentlore verify 2026` exits 1 and changes nothing |
+| an ambiguous id, an unresolvable `--since`, or a check that cannot run at all, **fails closed or is not counted** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `agentlore verify 2026` exits 1 and changes nothing; a check with no boundary and a clean tree is excluded from the score, never reported as a pass |
 | decided contradictions are caught | **proven, narrowly** | shared claim key + divergent value only; prose-vs-prose is deliberately out of scope |
 | every host reads the compiled memory | **mixed** | [INTEGRATION.md](../INTEGRATION.md): most do; Gemini CLI needs config; all have truncation caps that silently drop the tail |
-| **memory makes an agent do better work** | **unproven** | [bench/](../bench/README.md): a real null — and that fixture had no power to detect one |
+| **memory makes an agent do better work** | **preliminary** | [bench/](../bench/README.md): trap rate 4-in-7 → 2-in-22, Fisher p = 0.018 — but the control arm is only n=7 (the gateway ran out of credit mid-run), so this is "pending a full control arm", not a result. An earlier fixture returned a real null. |
 | works in a monorepo | **unproven** | no per-package scoping; the `--relative` bug proved silent failure in subfolders |
 | safe against a poisoned memory | **no** | `.memory/` is privileged input to a machine with credentials; no signing, no tamper-evidence, no secret scan on write |
 
 Nothing in this repo asks you to believe a claim that is not on that table. If a row says
 unproven, it is because the experiment has not been run or has come back null — not because the
-result was inconvenient.
+result was inconvenient. `preliminary` means it ran and points somewhere, but the sample is too
+small to claim.
 
 ### The agent-write-path arms
 
@@ -59,7 +60,7 @@ repo under test: experiment copies, the tool's README and its docs directory all
 ## Tests
 
 ```sh
-python3 run_tests.py          # 108 tests, ~40s, stdlib only
+python3 run_tests.py          # 115 tests, ~40s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp

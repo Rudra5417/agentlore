@@ -11,7 +11,8 @@ inputs:
     description: >-
       Commit or ref that this change starts from (use the PR base sha). Required for the
       dead-ends-settled check to see what this change touched; without it that check cannot
-      tell, and a silent check is a disabled check.
+      tell, so it is reported as NOT RUN and excluded from the score rather than counted as
+      a pass. A silent check is a disabled check.
     required: false
     default: ""
   github:
@@ -50,6 +51,11 @@ runs:
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
+        # A gate that cannot see is not a gate. With no boundary the change-scoped check
+        # cannot run, so say so loudly rather than letting a green run imply it passed.
+        if [ -z "${{ inputs.since }}" ]; then
+          echo "::warning title=MEMORY-HEALTH is running blind::'since' is empty, so dead-ends-settled cannot see what this change touched and is reported as not run, not as a pass. Pass the pull_request base sha on a PR, or the pre-push sha on a push."
+        fi
         args=(check)
         if [ "${{ inputs.github }}" = "true" ]; then args+=(--github); fi
         if [ -n "${{ inputs.since }}" ]; then args+=(--since "${{ inputs.since }}"); fi

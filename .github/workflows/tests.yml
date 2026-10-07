@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.9", "3.12"]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -123,4 +123,49 @@ jobs:
             exit 1
           fi
           echo "The action failed on broken memory, as it should."
+
+  # Packaging is a claim the README makes -- "one command install" -- and it used to be
+  # exercised only at release time, which is the worst moment to find it broken: in public,
+  # mid-publish. A repo directory that setuptools claims as a package, or an sdist that
+  # sweeps in local scratch, must fail on the push that caused it instead.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build the wheel and sdist
+        run: uv build
+
+      - name: The sdist must carry only tracked files
+        # sdist discovery does not consult .gitignore, so bench run output and egg-info ship
+        # silently unless MANIFEST.in prunes them. A source tarball full of someone's scratch
+        # state is the kind of thing a reviewer notices and a maintainer never does.
+        run: |
+          python3 - <<'PY'
+          import glob, subprocess, sys, tarfile
+          tracked = set(subprocess.run(["git", "ls-files"], capture_output=True,
+                                       text=True).stdout.split())
+          allowed = {"PKG-INFO", "setup.cfg", "pyproject.toml", "MANIFEST.in"}
+          names = [n for n in tarfile.open(glob.glob("dist/*.tar.gz")[0]).getnames()
+                   if not n.endswith("/")]
+          leaks = [n for n in names
+                   if n.split("/", 1)[-1] not in tracked
+                   and n.split("/", 1)[-1] not in allowed
+                   and "egg-info" not in n]
+          if leaks:
+              print("sdist carries files that are not tracked:")
+              for l in leaks:
+                  print("  " + l)
+              sys.exit(1)
+          print("sdist carries %d files, all tracked" % len(names))
+          PY
+
+      - name: The wheel must install and run in a clean venv
+        # The one path a stranger takes first, exercised the way they take it.
+        run: |
+          python3 -m venv /tmp/v
+          /tmp/v/bin/pip install --quiet --no-cache-dir dist/*.whl
+          /tmp/v/bin/agentlore --version
+          test -x /tmp/v/bin/agentlore
 

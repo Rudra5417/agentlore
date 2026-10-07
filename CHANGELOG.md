@@ -9,7 +9,7 @@ them:
 | stream | what it is | today |
 |---|---|---|
 | **`v1`** (major channel) | the **action interface** — the contract `uses: Rudra5417/agentlore@v1` depends on. A moving tag, updated as the tool improves, exactly like `actions/checkout@v4`. | `v1` |
-| **`v0.x`** (product) | the **tool** — `agentlore --version`, the CLI you run locally. | `0.9.0` |
+| **`v0.x`** (product) | the **tool** — `agentlore --version`, the CLI you run locally. | `0.9.1` |
 
 `v1.0.0` and `v1.0.1` were tagged as if the product were 1.0. Development carried on at `0.x`,
 which is why they sit above later product releases in date order.
@@ -21,6 +21,31 @@ channel. The product reaches `1.0.0` when the honest-status table in the README 
 Notable entries are grouped by what they fixed, not by commit. Every release notes its evidence.
 
 ---
+
+## v0.9.1 — 2026-10-07 — a check that could not run was counted as a pass
+
+The gate could print `18/18 GREEN` while one of the eighteen had not run. With no `--since` and a
+clean working tree there is no change set to read, so `dead-ends-settled` — the check that catches
+a dead end recorded by the very change that settled it — inspected nothing and reported `ok`.
+
+That is the **default state in CI**: a checkout leaves a clean tree, and
+`github.event.pull_request.base.sha` is empty on a `push` trigger, so wiring the action into a push
+workflow produced a permanently green gate that checked nothing. The action warned about this
+("a silent check is a disabled check") without failing closed on it.
+
+`ok` is now three states. A check that cannot run reports `n/a`, is **excluded from the
+denominator**, and is named in the header:
+
+    MEMORY-HEALTH: 17/17 GREEN (not run: dead-ends-settled)
+
+An unresolvable `--since` still fails closed, and an absent one with real working-tree changes
+still runs. Evidence: `TestSinceBoundary.test_a_missing_boundary_is_not_run_never_a_pass`, and
+`TestBaseline.test_fresh_repo_is_green` now asserts the denominator excludes it. 115 tests.
+
+Also here: `tests.yml` builds the wheel and sdist on every push, so a packaging break fails on the
+push that caused it rather than mid-publish; the test matrix covers the 3.10 and 3.11 the
+classifiers already claimed; and `MANIFEST.in` prunes `bench/` and egg-info, so the sdist carries
+only tracked files.
 
 ## v0.9.0 — 2026-10-06 — the name was invisible, so it changed
 

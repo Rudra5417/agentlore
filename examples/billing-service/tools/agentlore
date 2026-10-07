@@ -23,7 +23,7 @@ import uuid
 from datetime import date, datetime
 from pathlib import Path
 
-VERSION = "0.9.0"
+VERSION = "0.9.1"
 
 # AGENTS.md is read by every agent in every session, so the compiled dead-end list is
 # bounded: past this many, the file points at .memory/dead-ends.md rather than growing.
@@ -902,7 +902,7 @@ def collect_findings(entries, live, index_ok, index_fresh, stale, restyled=None,
     return findings
 
 
-def emit_github(findings, passed, total, n_entries, n_stale):
+def emit_github(findings, passed, total, n_entries, n_stale, not_run=None):
     import os
     for f in findings:
         if f["file"] and f["line"]:
@@ -919,6 +919,9 @@ def emit_github(findings, passed, total, n_entries, n_stale):
     icon = "PASS" if passed == total else "FAIL"
     out = ["## MEMORY-HEALTH %s: %d/%d" % (icon, passed, total), "",
            "`%d memories, %d stale, %d findings`" % (n_entries, n_stale, len(findings)), ""]
+    if not_run:
+        out += ["Not run -- cannot see what this change touched: %s"
+                % ", ".join("`%s`" % n for n in not_run), ""]
     if findings:
         out += ["| where | what |", "|---|---|"]
         for f in findings:
@@ -1048,6 +1051,16 @@ def cmd_check(args):
     # to avoid.
     unresolved_since = args.since if changed is None else ""
     changed = changed or set()
+    # A THIRD case, distinct from both of the above: no boundary was given AND the working
+    # tree is clean, so there is nothing to compare against and this check cannot see
+    # whether the change settled a dead end. Reporting "ok" here is the same lie as an
+    # unresolvable sha -- worse, because it is the DEFAULT state in CI, where a checkout
+    # leaves a clean tree and `github.event.pull_request.base.sha` is empty on a push
+    # trigger. So it is reported as NOT RUN (None), never as a pass, and the score excludes
+    # it. A clean tree is the only condition that blinds it: with uncommitted changes the
+    # working tree IS the change set, which is the local `agentlore check` case, and that
+    # still runs and can still fail.
+    no_boundary = not args.since and not changed
     unsettled = []
     for e in live:
         if e["type"] != "dead-end" or (e.get("resolved_by") or "").strip():
@@ -1059,9 +1072,15 @@ def cmd_check(args):
                          and any(anchor_matches(g, f) for g in e["anchors"]))
         if touched:
             unsettled.append((e, touched[:3]))
-    add("dead-ends-settled", not unsettled and not unresolved_since,
-        ("--since %s does not resolve in this clone, so this check cannot see what changed"
-         % unresolved_since) if unresolved_since else "%d unsettled" % len(unsettled))
+    if no_boundary:
+        add("dead-ends-settled", None,
+            "not run: no --since and a clean working tree, so there is no change set to "
+            "read. Pass --since <base> -- in CI that is "
+            "github.event.pull_request.base.sha on a PR, github.event.before on a push.")
+    else:
+        add("dead-ends-settled", not unsettled and not unresolved_since,
+            ("--since %s does not resolve in this clone, so this check cannot see what changed"
+             % unresolved_since) if unresolved_since else "%d unsettled" % len(unsettled))
 
     # 12 a hazard must name a real control and an accountable owner. A prohibition that no
     # mechanism enforces is a wish, and a wish is the worst kind of memory: an agent obeys
@@ -1248,8 +1267,14 @@ def cmd_check(args):
     add("no-agent-directives", not directive_hits,
         "memory instructs the agent about its own process: %s" % ", ".join(r[0] for r in directive_hits[:3]))
 
-    passed = sum(1 for _, ok, _ in checks if ok)
-    total = len(checks)
+    # Three states, not two. `None` means the check could not run: it is not a pass and it
+    # is not a failure. Excluding it from the denominator is what stops the score from
+    # claiming a check that never happened, and naming it in the header keeps the gap
+    # visible instead of averaging it away.
+    failed = [n for n, ok, _ in checks if ok is False]
+    not_run = [n for n, ok, _ in checks if ok is None]
+    passed = sum(1 for _, ok, _ in checks if ok is True)
+    total = len(checks) - len(not_run)
     color = GREEN if passed == total else RED
 
     findings = collect_findings(entries, live, index_ok, fresh, stale, restyled, unsettled,
@@ -1284,11 +1309,12 @@ def cmd_check(args):
         })
 
     if args.brief:
-        bad = [n for n, ok, _ in checks if not ok]
-        tail = "" if not bad else " -- " + ", ".join(bad)
-        print("MEMORY-HEALTH: %d/%d %s%s" % (passed, total, "GREEN" if passed == total else "BROKEN", tail))
+        tail = "" if not failed else " -- " + ", ".join(failed)
+        skipped = "" if not not_run else " (not run: %s)" % ", ".join(not_run)
+        print("MEMORY-HEALTH: %d/%d %s%s%s"
+              % (passed, total, "GREEN" if passed == total else "BROKEN", tail, skipped))
         if args.github:
-            emit_github(findings, passed, total, len(entries), len(stale))
+            emit_github(findings, passed, total, len(entries), len(stale), not_run)
         return 0 if passed == total else 1
 
     print("%sMEMORY-HEALTH: %d/%d %s%s" % (color, passed, total,
@@ -1296,8 +1322,13 @@ def cmd_check(args):
           + "  %s(%d memories, %d stale, %s)%s" % (
               DIM, len(entries), len(stale), repo_name(), OFF))
     for name, ok, note in checks:
-        mark = GREEN + "ok  " + OFF if ok else RED + "FAIL" + OFF
-        print("  %s %s%s" % (mark, name, ("  -- " + note) if note and not ok else ""))
+        if ok is None:
+            mark = DIM + "n/a " + OFF
+        elif ok:
+            mark = GREEN + "ok  " + OFF
+        else:
+            mark = RED + "FAIL" + OFF
+        print("  %s %s%s" % (mark, name, ("  -- " + note) if note and ok is not True else ""))
     if stale:
         print("\n%sstale memories (code moved, memory did not):%s" % (BOLD, OFF))
         for e, hits in stale:
@@ -1381,7 +1412,7 @@ def cmd_check(args):
         print("%s%d finding(s) -> %s%s" % (DIM, len(findings),
               "annotations on the diff + job summary" if args.github else "fix before merging", OFF))
     if args.github:
-        emit_github(findings, passed, total, len(entries), len(stale))
+        emit_github(findings, passed, total, len(entries), len(stale), not_run)
     return 0 if passed == total else 1
 
 
