@@ -130,14 +130,16 @@ depends on its location, and it runs from any working directory.
 
 ### 4. From a package index — `pip`, `pipx` or `uv`
 
-A managed copy of the same file, for when you would rather not vendor or curl it:
+**Not yet published.** The packaging is in place and `publish.yml` is wired for PyPI Trusted
+Publishing, but the first upload is still pending, so these 404 for now. Use option 1, 2 or 3 above
+in the meantime.
 
 ```bash
-uv tool install agentlore        # or: pipx install agentlore   /   pip install agentlore
-agentlore --version              # agentlore 0.9.0
+uv tool install agentlore        # at v1.0 -- 404s until the first publish
 ```
 
-The package ships the identical single, zero-dependency file — installing it resolves nothing.
+When it lands, the package ships the identical single, zero-dependency file — installing it
+resolves nothing.
 
 ### Check it before you wire it in
 
