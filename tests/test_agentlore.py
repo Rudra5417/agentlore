@@ -1613,3 +1613,22 @@ class TestActionMetadata(Base):
         for key in ("name", "description", "author", "runs"):
             self.assertRegex(m, r"(?m)^%s:" % key, "action.yml is missing %s" % key)
         self.assertIn("using: composite", m)
+
+    def test_the_action_refuses_to_run_without_a_boundary(self):
+        """The default must not be the configuration that silently skips a check.
+
+        An empty `since` is exactly what a push-trigger consumer gets -- `github.event
+        .pull_request` is null there -- and in that state the change-scoped check cannot run
+        at all. A gate that is green having skipped its change-scoped check is the fail-open
+        this tool exists to catch, so the manifest has to default to refusing, not warning.
+        """
+        m = self.manifest()
+        block = re.search(r"(?ms)^  require-since:\n(.*?)(?=^  [\w-]+:)", m)
+        self.assertIsNotNone(block, "action.yml declares no require-since input")
+        self.assertIn('default: "true"', block.group(1),
+                      "require-since must default to true, or the blind gate is the default")
+        guard = re.search(r"(?ms)- name: A boundary is required\n(.*?)(?=^    - name:|\Z)", m)
+        self.assertIsNotNone(guard, "no step enforces require-since")
+        self.assertIn("require-since == 'true'", guard.group(1))
+        self.assertIn("exit 1", guard.group(1),
+                      "the guard must fail the step, not warn about it")

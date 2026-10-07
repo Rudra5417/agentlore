@@ -1,10 +1,12 @@
 name: memory-health
 
-# The repo's own shipped example gets a live memory gate, the way a consumer repo would.
-# Two things are exercised here that nothing else exercises:
-#   * the PUBLISHED action, resolved by tag (`uses: ...@v1`) with no vendored copy, and
-#   * `--since` against a real pull-request base sha, which is the only way
-#     dead-ends-settled can see what a change actually touched.
+# Two repos' worth of memory are gated here, and both matter:
+#   * the shipped example, which is what a consumer copies, and
+#   * this repo's own memory, because a memory tool whose own repo keeps its memory in a
+#     file nothing checks is the first thing a skeptical reader notices.
+# Both exercise the PUBLISHED action, resolved by tag (`uses: ...@v1`) with no vendored
+# copy, and both pass a real `--since`, which is the only way dead-ends-settled can see
+# what a change actually touched.
 on:
   pull_request:
   push:
@@ -29,7 +31,21 @@ jobs:
         with:
           working-directory: examples/billing-service
           compile-in-sync: "true"
-          # Only PRs have a boundary. On push this is empty and the check runs without one,
-          # deliberately: `github.event.before` is 40 zeros on a new branch, which is
-          # exactly the unresolvable ref the tool now refuses to accept.
-          since: ${{ github.event.pull_request.base.sha }}
+          # A boundary always. On a PR it is the base sha; on a push to main it is the sha
+          # that was at the tip before this push. `github.event.before` is 40 zeros on a NEW
+          # branch, which is exactly the unresolvable ref the tool refuses to accept -- and
+          # this workflow only pushes to main, where it is always a real commit.
+          since: ${{ github.event.pull_request.base.sha || github.event.before }}
+
+  dogfood:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: MEMORY-HEALTH for agentlore's own memory
+        uses: Rudra5417/agentlore@v1
+        with:
+          compile-in-sync: "true"
+          since: ${{ github.event.pull_request.base.sha || github.event.before }}

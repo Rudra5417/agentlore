@@ -95,11 +95,33 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Three outcomes, not two. A gate that passes on healthy memory and fails on broken
+      # memory can still be a no-op in the configuration most consumers actually write: an
+      # empty `since` on a push trigger, where the change-scoped check cannot run at all.
+      - name: The action refuses to run without a boundary
+        id: blind
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: examples/action-fixture
+
+      - name: Assert it refused
+        run: |
+          if [ "${{ steps.blind.outcome }}" != "failure" ]; then
+            echo "::error::the action ran with no boundary and did not complain, so a push-trigger consumer gets a green gate whose change-scoped check never ran"
+            exit 1
+          fi
+          echo "The action refused to run blind, as it should."
+
       - name: The action passes a healthy gate
         uses: ./
         with:
           working-directory: examples/action-fixture
           compile-in-sync: "true"
+          # A real boundary, so require-since is satisfied the way a consumer satisfies it.
+          # HEAD resolves and the tree is clean, so the change set is empty and the
+          # change-scoped check runs on nothing rather than being skipped.
+          since: HEAD
 
       - name: Break it -- change the code under a memory and leave the memory alone
         working-directory: examples/action-fixture
@@ -115,6 +137,7 @@ jobs:
         uses: ./
         with:
           working-directory: examples/action-fixture
+          since: HEAD
 
       - name: Assert it failed
         run: |

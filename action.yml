@@ -15,6 +15,14 @@ inputs:
       a pass. A silent check is a disabled check.
     required: false
     default: ""
+  require-since:
+    description: >-
+      Fail when 'since' is empty. Without a boundary the change-scoped check cannot see what
+      this change touched, so it reports not-run and is excluded from the score: the gate is
+      green having checked less than it claims. Turn this off only if you deliberately want
+      the static checks alone.
+    required: false
+    default: "true"
   github:
     description: Emit check-run annotations anchored on the diff, plus a job summary table.
     required: false
@@ -39,6 +47,17 @@ inputs:
 runs:
   using: composite
   steps:
+    # A green gate that skipped a check is the failure this tool exists to catch, so refuse
+    # to run blind by default rather than warning about it and passing anyway.
+    - name: A boundary is required
+      if: ${{ inputs.require-since == 'true' }}
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.since }}" ]; then
+          echo "::error::'since' is empty and require-since is true, so the change-scoped check would never run and this gate would be green having checked less than it claims. Pass the boundary -- on a pull_request the base sha, on a push the sha that was at the tip before it -- or set require-since: false to run the static checks alone."
+          exit 1
+        fi
+
     # .memory/index.db is gitignored: a derived build artifact, never reviewed, never
     # merged. It is rebuilt from the markdown here every run, which also exercises the
     # index-fresh check instead of trusting a stale committed index.
