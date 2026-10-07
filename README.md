@@ -5,6 +5,7 @@ motivated it, and gated so it cannot silently rot.**
 
 [![tests](https://github.com/Rudra5417/agentlore/actions/workflows/tests.yml/badge.svg)](https://github.com/Rudra5417/agentlore/actions/workflows/tests.yml)
 [![release](https://img.shields.io/github/v/release/Rudra5417/agentlore)](https://github.com/Rudra5417/agentlore/releases/latest)
+[![pypi](https://img.shields.io/pypi/v/agentlore)](https://pypi.org/project/agentlore/)
 [![license](https://img.shields.io/github/license/Rudra5417/agentlore)](LICENSE)
 [![python](https://img.shields.io/badge/python-3.9%20%7C%203.12-2dd4f7)](.github/workflows/tests.yml)
 
@@ -130,16 +131,14 @@ depends on its location, and it runs from any working directory.
 
 ### 4. From a package index — `pip`, `pipx` or `uv`
 
-**Not yet published.** The packaging is in place and `publish.yml` is wired for PyPI Trusted
-Publishing, but the first upload is still pending, so these 404 for now. Use option 1, 2 or 3 above
-in the meantime.
+A managed copy of the same file, for when you would rather not vendor or curl it:
 
 ```bash
-uv tool install agentlore        # at v1.0 -- 404s until the first publish
+uv tool install agentlore        # or: pipx install agentlore   /   pip install agentlore
+agentlore --version              # agentlore 0.9.0
 ```
 
-When it lands, the package ships the identical single, zero-dependency file — installing it
-resolves nothing.
+The package ships the identical single, zero-dependency file — installing it resolves nothing.
 
 ### Check it before you wire it in
 
