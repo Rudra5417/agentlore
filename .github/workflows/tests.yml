@@ -147,8 +147,10 @@ jobs:
           tracked = set(subprocess.run(["git", "ls-files"], capture_output=True,
                                        text=True).stdout.split())
           allowed = {"PKG-INFO", "setup.cfg", "pyproject.toml", "MANIFEST.in"}
-          names = [n for n in tarfile.open(glob.glob("dist/*.tar.gz")[0]).getnames()
-                   if not n.endswith("/")]
+          # getnames() includes directory entries ("agentlore-0.9.1", "…/tests"); only
+          # files can be leaks.
+          members = tarfile.open(glob.glob("dist/*.tar.gz")[0]).getmembers()
+          names = [m.name for m in members if m.isfile()]
           leaks = [n for n in names
                    if n.split("/", 1)[-1] not in tracked
                    and n.split("/", 1)[-1] not in allowed
