@@ -48,5 +48,12 @@ Documentation = "https://github.com/Rudra5417/agentlore/blob/main/INTEGRATION.md
 # The canonical artifact stays the single, self-contained, zero-dependency
 # `agentlore` file. The package is a wrapper around it, not a replacement:
 # `uv tool install agentlore` / `pipx install agentlore` install the same file.
+#
+# There are no importable packages here -- the artifact is one script file.
+# Without the explicit empty lists, setuptools' flat-layout auto-discovery
+# treats repo directories (site/, bench/) as packages and refuses to build
+# as soon as there is more than one of them.
 [tool.setuptools]
 script-files = ["agentlore"]
+packages = []
+py-modules = []

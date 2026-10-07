@@ -1,8 +1,12 @@
-# Local artifacts that must never ship in an sdist.
-prune bench/runs
-prune bench/logs
+# Local artifacts and build output that must never ship in an sdist.
+#
+# sdist file discovery does not consult .gitignore, so this has to mirror it.
+# bench/ is a local benchmark harness (fixtures, trial runner, scratch arms);
+# it is evidence that lives in git, not something needed to build the package.
+prune bench
 prune .test-failures
 prune dist
 prune build
+prune agentlore.egg-info
 
 global-exclude __pycache__/* *.py[cod] .DS_Store .test-failures
