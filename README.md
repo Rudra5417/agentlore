@@ -218,7 +218,7 @@ Nothing here asks you to believe a claim that is not on this table.
 | memory can be recorded, anchored and versioned in the repo | **proven** | 115 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: two annotations, then `success` once the same PR resolved it |
-| an ambiguous id or an unresolvable `--since` **fails closed** | **proven** | `TestFailClosed`, `TestSinceBoundary` |
+| an ambiguous id, an unresolvable `--since`, or a check that cannot run at all, **fails closed or is not counted** | **proven** | `TestFailClosed`, `TestSinceBoundary`: a check with no boundary and a clean tree is excluded from the score, never reported as a pass |
 | decided contradictions are caught | **proven, narrowly** | shared claim key + divergent value only; prose-vs-prose is deliberately out of scope |
 | every host reads the compiled memory | **mixed** | [INTEGRATION.md](INTEGRATION.md): most do; Gemini CLI needs config; all have truncation caps that silently drop the tail |
 | **memory makes an agent do better work** | **preliminary** | [bench/](bench/README.md): trap rate 4-in-7 → 2-in-22, Fisher p = 0.018 — but the control arm is only n=7 (the gateway ran out of credit mid-run), so this is "pending a full control arm", not a result. An earlier fixture returned a real null. |
