@@ -206,23 +206,26 @@
       <span class="td" style="background:#ff5f57"></span>
       <span class="td" style="background:#febc2e"></span>
       <span class="td" style="background:#28c840"></span>
-      <span>billing-service — the change that settled its own dead end</span>
+      <span>billing-service — a settled dead end rides the change that fixed it</span>
     </div>
     <div class="tterm"><pre><span class="c-dim">$</span> agentlore check --since <span class="c-vi">"$BASE_SHA"</span>
-<span class="c-red">MEMORY-HEALTH: 17/18 BROKEN</span>  <span class="c-dim">(1 memories, 0 stale, billing)</span>
-  <span class="c-red">FAIL</span> dead-ends-settled  <span class="c-dim">-- 1 unsettled</span>
+<span class="c-red">MEMORY-HEALTH: 17/18 BROKEN</span>  <span class="c-dim">(1 memories, 1 stale, billing)</span>
+  <span class="c-dim">...</span>
+  <span class="c-red">FAIL</span> anchors-not-stale  <span class="c-dim">-- 1 out of date</span>
+  <span class="c-dim">...</span>
 
-<span class="c-dim">dead ends that rode the change that settled them:</span>
-  DEAD-2026-09-29-95f7  The refund window rejects credit notes too
-    <span class="c-dim">anchored to</span> src/billing/**<span class="c-dim">, changed in this same change:</span> src/billing/gateway.py
-    <span class="c-dim">-&gt; this memory now reads as a live warning about a condition your change removed.</span>
+<span class="c-dim">stale memories (code moved, memory did not):</span>
+  DEAD-2026-10-06-5276  The refund window rejects credit notes too
+    <span class="c-dim">changed since</span> d105edc<span class="c-dim">:</span> src/billing/gateway.py
+    <span class="c-dim">-&gt; re-verify, or run:</span> agentlore supersede DEAD-2026-10-06-5276
 
-<span class="c-dim">$</span> agentlore verify DEAD-2026-09-29-95f7 <span class="c-vi">--resolved-by</span> <span class="c-vi">"vendor supports credit notes as of v3.2"</span>
-verified DEAD-2026-09-29-95f7 <span class="c-dim">@ b5c646d</span>
+<span class="c-dim">$</span> agentlore verify DEAD-2026-10-06-5276 <span class="c-vi">--resolved-by</span> <span class="c-vi">"vendor supports credit notes as of v3.2"</span>
+verified DEAD-2026-10-06-5276 <span class="c-dim">@ e6d8165</span>
 
 <span class="c-dim">$</span> agentlore check --brief
 <span class="c-amb">MEMORY-HEALTH: 17/18 BROKEN</span> -- compile-current  <span class="c-dim"># the file your agent reads is now stale</span>
-<span class="c-dim">$</span> agentlore compile &amp;&amp; agentlore check --brief
+<span class="c-dim">$</span> agentlore compile
+<span class="c-dim">$</span> agentlore check --brief
 <span class="c-grn">MEMORY-HEALTH: 18/18 GREEN</span></pre></div>
   </div>
 </div>

@@ -17,6 +17,8 @@ One file. Python standard library. No dependencies, no service, no account, noth
 
 Current release **v0.9.0** · [site](https://rudra5417.github.io/agentlore/) · [changelog](CHANGELOG.md) · [what it does not do yet](docs/gaps.md)
 
+![agentlore in a terminal: a settled dead end fails the gate, verify resolves it, the gate goes green](site/demo.gif)
+
 ---
 
 ## The failure it exists for
