@@ -22,6 +22,49 @@ Notable entries are grouped by what they fixed, not by commit. Every release not
 
 ---
 
+## v1 — 2026-10-07 — the action refuses to run blind (action channel, not a product release)
+
+An action-channel change with no CLI change, so there is no `v0.x` entry for it:
+`agentlore --version` is still `0.9.1` and the tool behaves identically. What changed is what
+`uses: Rudra5417/agentlore@v1` does when it has no boundary.
+
+`since` is what lets `dead-ends-settled` see what a change touched. With no `--since` and a
+clean tree that check cannot run — and the previous release taught the score to say so
+(`not run: dead-ends-settled`) rather than counting it as a pass. But a gate that is green
+having skipped a check is still the fail-open this tool exists to catch, and "not run" in a
+parenthesis is easy to miss.
+
+`require-since` now defaults to **true**, and the action fails the step with an error naming
+the fix instead of warning and passing:
+
+    'since' is empty and require-since is true, so the change-scoped check would never run
+    and this gate would be green having checked less than it claims.
+
+**This is a behavior change for anyone on `@v1` who never passed `since`** — their gate now
+fails where it previously passed. That is the point: a check that could not run was being
+reported as a passing gate. Pass the boundary, or set `require-since: false` to run the static
+checks alone.
+
+Not hypothetical, and not someone else's repository: this repository's own `memory-health.yml`
+passed `github.event.pull_request.base.sha` on a `push` trigger, where it is empty, so its
+example gate had been running blind since it was written. It now uses
+`github.event.pull_request.base.sha || github.event.before`, which is a real commit on a push
+to main.
+
+The `action` CI job gains a third case — no boundary, must fail — because a gate nobody has
+watched fail in its default configuration is decoration.
+
+**The repo now keeps its own memory.** Six entries in `.memory/`, compiled to `AGENTS.md`, and
+gated by a new `dogfood` job that uses the published action by tag rather than the working
+tree, so the job exercises what a consumer actually gets. It earned its keep on the first run:
+`check` came back `17/18 BROKEN -- hazards-enforced`, because a hazard had no owner and no
+enforcement. A hazard with nobody accountable is a wish, and the tool said so about mine.
+
+Evidence: `TestActionMetadata.test_the_action_refuses_to_run_without_a_boundary` pins the
+default, and the `action` job asserts all three outcomes in `tests.yml`. 116 tests.
+
+---
+
 ## v0.9.1 — 2026-10-07 — a check that could not run was counted as a pass
 
 The gate could print `18/18 GREEN` while one of the eighteen had not run. With no `--since` and a

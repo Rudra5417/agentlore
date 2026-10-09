@@ -13,7 +13,7 @@ not.**
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored, and versioned in the repo | **proven** | 115 tests; the shipped example |
+| memory can be recorded, anchored, and versioned in the repo | **proven** | 116 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: `memory-health: failure`, two annotations, then `success` when the same PR resolved it |
 | an ambiguous id, an unresolvable `--since`, or a check that cannot run at all, **fails closed or is not counted** | **proven** | `TestFailClosed`, `TestSinceBoundary`; `agentlore verify 2026` exits 1 and changes nothing; a check with no boundary and a clean tree is excluded from the score, never reported as a pass |
@@ -60,7 +60,7 @@ repo under test: experiment copies, the tool's README and its docs directory all
 ## Tests
 
 ```sh
-python3 run_tests.py          # 115 tests, ~40s, stdlib only
+python3 run_tests.py          # 116 tests, ~40s, stdlib only
 ```
 
 No pytest, no dependencies — same as the tool. Each test builds a throwaway git repo in a temp

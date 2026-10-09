@@ -278,11 +278,13 @@ verified DEAD-2026-10-06-5276 <span class="c-dim">@ e6d8165</span>
     <h2 class="reveal">It fails closed, on purpose.</h2>
     <p class="lead reveal">A guard that cannot read its own state has not guarded anything. If the
       index is unreadable, if a <code>--since</code> ref cannot be resolved, if an id would be
-      ambiguous — agentlore stops rather than passing quietly.</p>
+      ambiguous — agentlore stops rather than passing quietly. The action goes further and refuses
+      to run at all without a boundary, because a check that cannot see what changed must never be
+      counted as a pass.</p>
 
     <div class="grid g4" style="margin-top:36px">
       <div class="card reveal"><div class="stat">18</div><div class="stat-label">checks in the gate</div></div>
-      <div class="card reveal"><div class="stat">114</div><div class="stat-label">tests in the suite</div></div>
+      <div class="card reveal"><div class="stat">116</div><div class="stat-label">tests in the suite</div></div>
       <div class="card reveal"><div class="stat">0</div><div class="stat-label">third-party dependencies</div></div>
       <div class="card reveal"><div class="stat">1</div><div class="stat-label">file you have to audit</div></div>
     </div>
@@ -318,7 +320,7 @@ verified DEAD-2026-10-06-5276 <span class="c-dim">@ e6d8165</span>
         <p style="margin-bottom:12px">Usually the right answer — the gate is the part that has to run on every PR.</p>
         <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>uses: Rudra5417/agentlore@v1
 with:
-  since: ${{ github.event.pull_request.base.sha }}</code></pre></div>
+  since: ${{ github.event.pull_request.base.sha || github.event.before }}</code></pre></div>
       <div class="card reveal"><h3>From a package index</h3>
         <p style="margin-bottom:12px">A managed copy of the same file.</p>
         <pre style="font-family:var(--mono);font-size:12px;color:var(--cyan);margin:0;overflow-x:auto"><code>uv tool install agentlore

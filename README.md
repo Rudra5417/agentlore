@@ -91,7 +91,9 @@ Usually the right answer, because the gate is the part that has to run on every 
           fetch-depth: 0        # only so an annotation can name the file that drifted
       - uses: Rudra5417/agentlore@v1
         with:
-          since: ${{ github.event.pull_request.base.sha }}
+          # A PR has a base sha; a push has the sha that was at the tip before it. Pass only
+          # the first and the gate is blind on push -- which the action now refuses to do.
+          since: ${{ github.event.pull_request.base.sha || github.event.before }}
 ```
 
 GitHub fetches the tool for you. Nothing in your repo changes, and there is no version to track —
@@ -175,11 +177,16 @@ Then add the gate. No vendored copy, nothing to keep in sync:
           fetch-depth: 0        # only so an annotation can name the file that drifted
       - uses: Rudra5417/agentlore@v1
         with:
-          since: ${{ github.event.pull_request.base.sha }}
+          # A PR has a base sha; a push has the sha that was at the tip before it. Pass only
+          # the first and the gate is blind on push -- which the action now refuses to do.
+          since: ${{ github.event.pull_request.base.sha || github.event.before }}
 ```
 
 `since` is the one input worth setting: without it `dead-ends-settled` cannot tell what your change
-touched, and a silent check is a disabled check.
+touched, and a silent check is a disabled check. The action enforces that rather than trusting you
+to remember: `require-since` defaults to `true`, so it fails the step instead of reporting a green
+gate that skipped a check. Set `require-since: false` if you deliberately want the static checks
+alone.
 [Action inputs and the CI wiring →](docs/using.md#ci-the-review-gate)
 
 ## What the gate catches
@@ -215,7 +222,7 @@ Nothing here asks you to believe a claim that is not on this table.
 
 | claim | status | evidence |
 |---|---|---|
-| memory can be recorded, anchored and versioned in the repo | **proven** | 115 tests; the shipped example |
+| memory can be recorded, anchored and versioned in the repo | **proven** | 116 tests; the shipped example |
 | staleness is detected by **content**, not git history | **proven** | a fixture whose memory root is a subdirectory; the `--relative` fix |
 | the gate **blocks a PR** that rides its own dead end | **proven** | a real check run on PR #1: two annotations, then `success` once the same PR resolved it |
 | an ambiguous id, an unresolvable `--since`, or a check that cannot run at all, **fails closed or is not counted** | **proven** | `TestFailClosed`, `TestSinceBoundary`: a check with no boundary and a clean tree is excluded from the score, never reported as a pass |
@@ -264,7 +271,7 @@ None checks whether it is *true*.
 | [bench/](bench/README.md) | The efficacy harness, the method, and the null. Re-run it against your repo. |
 
 ```bash
-python3 run_tests.py       # 115 tests, ~40s, stdlib only — same as the tool
+python3 run_tests.py       # 116 tests, ~40s, stdlib only — same as the tool
 ```
 
 CI runs the suite on Python 3.9 and 3.12, then puts the shipped example through its own memory gate

@@ -1111,11 +1111,27 @@ class TestIdResolution(Base):
                          "an ambiguous id must not modify anything")
 
     def test_a_unique_prefix_resolves(self):
+        """A prefix that is unique resolves -- the shortest one that is.
+
+        The prefix has to be COMPUTED, not guessed. The last four characters of an id are
+        random, so chopping a fixed number off the end collides about once in 256 runs, and
+        when it does the tool correctly refuses an ambiguous prefix while the assertion blames
+        the tool for it. That is how this test failed for real: `DEC-2026-10-08-48` matched
+        both `...-484c` and `...-48e1`.
+        """
         mem = (self.f.dir / ".memory" / "decisions.md").read_text()
-        first = mem.split("id: ")[1].split("\n")[0].strip()
-        # a prefix longer than the shared date part is unique to one entry
-        code, out = self.f.agentlore("verify", first[:-2], "--resolved-by", "PR #9")
-        self.assertEqual(code, 0, out)
+        ids = [line.split("id: ", 1)[1].strip()
+               for line in mem.split("\n") if line.startswith("id: ")]
+        self.assertEqual(len(ids), 2, "this test needs exactly two entries: %s" % ids)
+        first, second = ids
+
+        n = 1
+        while n < len(first) and second.startswith(first[:n]):
+            n += 1
+        prefix = first[:n]
+
+        code, out = self.f.agentlore("verify", prefix, "--resolved-by", "PR #9")
+        self.assertEqual(code, 0, "a unique prefix must resolve:\n" + out)
         self.assertIn(first, out + (self.f.dir / ".memory" / "decisions.md").read_text())
 
     def test_an_unknown_id_refuses(self):

@@ -105,7 +105,10 @@ Never assume. Ask the agent directly, in a session in the repo:
 # .github/workflows/memory-health.yml  -- the enforced half
 - uses: Rudra5417/agentlore@v1
   with:
-    since: ${{ github.event.pull_request.base.sha }}
+    # A PR has a base sha; a push has the sha that was at the tip before it. With neither the
+    # change-scoped check cannot run, and require-since (default true) fails the step rather
+    # than reporting a green gate that skipped a check.
+    since: ${{ github.event.pull_request.base.sha || github.event.before }}
 ```
 
 Then, once per repo:
